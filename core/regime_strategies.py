@@ -45,6 +45,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Optional
 
 from config.settings import (
     MAX_POSITIONS,
@@ -52,6 +53,9 @@ from config.settings import (
     REBALANCE_DRIFT_THRESHOLD,
     UNCERTAINTY_ALLOCATION_FACTOR,
 )
+
+if TYPE_CHECKING:
+    from core.wheel_strategy import WheelAction, WheelPosition, WheelStrategy
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +87,7 @@ class Signal:
     needs_rebalance: bool
     rationale: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    wheel_action: Optional[WheelAction] = None
 
 
 @dataclass
@@ -128,6 +133,12 @@ def get_signal(
     portfolio_nav: float,
     current_allocation: float,
     is_uncertain: bool,
+    *,
+    wheel_strategy: Optional[WheelStrategy] = None,
+    wheel_position: Optional[WheelPosition] = None,
+    option_chain: Optional[list] = None,
+    buying_power: float = 0.0,
+    current_pnl_pct: float = 0.0,
 ) -> Signal:
     """Return a Signal for the current regime state.
 
@@ -158,8 +169,8 @@ def get_signal(
 
     # Position size: per-position allocation bounded by 1 % NAV risk cap
     n_positions = max(profile.max_new_positions, 1)
-    buying_power = portfolio_nav * effective_alloc * profile.leverage
-    per_position_usd = buying_power / n_positions
+    equity_budget = portfolio_nav * effective_alloc * profile.leverage
+    per_position_usd = equity_budget / n_positions
     risk_cap_usd = portfolio_nav * PER_TRADE_RISK_CAP
     position_size_usd = max(min(per_position_usd, risk_cap_usd), 0.0)
 
@@ -181,6 +192,18 @@ def get_signal(
         needs_rebalance, current_allocation,
     )
 
+    wheel_action = None
+    if wheel_strategy is not None:
+        wheel_action = wheel_strategy.get_next_action(
+            position=wheel_position,
+            current_regime=regime,
+            option_chain=option_chain or [],
+            portfolio_nav=portfolio_nav,
+            buying_power=buying_power,
+            is_uncertain=is_uncertain,
+            current_pnl_pct=current_pnl_pct,
+        )
+
     return Signal(
         regime=regime,
         regime_name=profile.name,
@@ -191,6 +214,7 @@ def get_signal(
         is_uncertain=is_uncertain,
         needs_rebalance=needs_rebalance,
         rationale=rationale,
+        wheel_action=wheel_action,
     )
 
 

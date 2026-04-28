@@ -33,6 +33,10 @@ from config.settings import (
 )
 
 
+class InsufficientFundsError(Exception):
+    """Raised by validate_put_sale / validate_call_sale when pre-flight fails."""
+
+
 @dataclass
 class CircuitBreakerState:
     peak_drawdown_lockout: bool = False
@@ -188,3 +192,33 @@ class RiskManager:
     def all_fired(self) -> list[str]:
         """Every circuit-breaker event that has fired since initialize()."""
         return list(self._all_fired)
+
+    # ------------------------------------------------------------------
+    # Wheel strategy pre-flight validators
+    # ------------------------------------------------------------------
+
+    def validate_put_sale(self, strike: float, qty: int, buying_power: float) -> None:
+        """Confirm buying power covers full assignment before approving a put sale.
+
+        Raises InsufficientFundsError if the check fails.
+        Full assignment cost = strike × qty × 100 (one contract = 100 shares).
+        """
+        required = strike * qty * 100
+        if buying_power < required:
+            raise InsufficientFundsError(
+                f"Insufficient buying power for put sale: "
+                f"need ${required:,.2f}, have ${buying_power:,.2f}"
+            )
+
+    def validate_call_sale(self, symbol: str, qty: int, position_tracker) -> None:
+        """Confirm shares are owned before approving a covered call sale.
+
+        Raises InsufficientFundsError if the wheel position is not in ASSIGNED state.
+        """
+        from core.wheel_strategy import WheelState
+        state = position_tracker.get_wheel_state(symbol)
+        if state != WheelState.ASSIGNED:
+            raise InsufficientFundsError(
+                f"Cannot sell {qty} call contract(s) on {symbol}: shares not owned "
+                f"(wheel state={state!r}, expected ASSIGNED)"
+            )

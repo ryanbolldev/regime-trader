@@ -89,3 +89,15 @@ ALPACA_BASE_URL = "https://paper-api.alpaca.markets"
 ALERT_EMAIL_RECIPIENTS = []
 ALERT_WEBHOOK_URL      = ""
 ALERT_COOLDOWN_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# Wheel strategy
+# ---------------------------------------------------------------------------
+WHEEL_TICKERS               = ["SPY"]
+WHEEL_PUT_DELTA_TARGET      = -0.28   # target delta for put selection
+WHEEL_CALL_DELTA_TARGET     =  0.28   # target delta for call selection
+WHEEL_MIN_DTE               =  30     # minimum days to expiration
+WHEEL_MAX_DTE               =  45     # maximum days to expiration
+WHEEL_EARLY_CLOSE_PROFIT_PCT =  0.50  # close at 50 % of max profit
+WHEEL_EARLY_CLOSE_LOSS_PCT   =  2.00  # stop loss at 200 % of premium received
+WHEEL_GAMMA_RISK_DTE         =  7     # close losing positions with < 7 DTE

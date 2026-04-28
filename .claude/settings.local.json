@@ -18,7 +18,9 @@
       "Bash(python -c \"import streamlit; print\\(streamlit.__version__\\)\")",
       "Bash(python -m pytest tests/test_alerts.py -v)",
       "Bash(python -m pytest tests/ -v --tb=short)",
-      "Bash(python -m pytest tests/ --tb=short)"
+      "Bash(python -m pytest tests/ --tb=short)",
+      "Bash(python -m pytest tests/test_wheel_strategy.py -v)",
+      "Bash(python -m pytest tests/ --tb=short -q)"
     ]
   }
 }
