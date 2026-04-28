@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_hmm_engine.py -v --tb=short)",
+      "Bash(pip install *)",
+      "Bash(python -m pytest tests/test_regime_strategies.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_performance.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_backtester.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows tests/test_backtester.py::TestRiskManagerCircuitBreakers -v --tb=short)",
+      "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows -v --tb=short)"
+    ]
+  }
+}

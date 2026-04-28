@@ -1,0 +1,29 @@
+# Core ML / statistics
+hmmlearn>=0.3.2
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.13.0
+
+# Broker integration
+alpaca-py>=0.26.0
+
+# Configuration / secrets
+python-dotenv>=1.0.1
+
+# Technical indicators
+ta>=0.11.0           # RSI, ATR, SMA, etc.
+
+# Dashboard
+streamlit>=1.35.0
+plotly>=5.22.0
+
+# Notifications
+requests>=2.32.0     # webhook delivery
+
+# Testing
+pytest>=8.2.0
+pytest-cov>=5.0.0
+
+# Type hints
+typing_extensions>=4.12.0

@@ -1,0 +1,47 @@
+# --- Secrets (NEVER commit) ---
+.env
+*.env
+secrets.yaml
+credentials.json
+
+# --- Lockfile (created by risk_manager on -10% drawdown) ---
+*.lock
+TRADING_HALTED.lock
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Logs and run artefacts ---
+logs/
+*.log
+run_journal/
+backtest_results/
+
+# --- Data cache ---
+data_cache/
