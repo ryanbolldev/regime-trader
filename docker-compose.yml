@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  regime_trader:
+    build: .
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    restart: on-failure
+
+  dashboard:
+    build: .
+    command: >
+      streamlit run dashboard/app.py
+      --server.port 8501
+      --server.address 0.0.0.0
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    ports:
+      - "8501:8501"
+    restart: on-failure

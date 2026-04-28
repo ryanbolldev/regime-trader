@@ -7,7 +7,13 @@
       "Bash(python -m pytest tests/test_performance.py -v --tb=short)",
       "Bash(python -m pytest tests/test_backtester.py -v --tb=short)",
       "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows tests/test_backtester.py::TestRiskManagerCircuitBreakers -v --tb=short)",
-      "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows -v --tb=short)"
+      "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows -v --tb=short)",
+      "Bash(python -c \"import alpaca; print\\(alpaca.__version__\\)\")",
+      "Bash(python -c \"from alpaca.trading.client import TradingClient; from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest; from alpaca.trading.enums import OrderSide, TimeInForce, OrderType; print\\('trading ok'\\)\")",
+      "Bash(python -c \"from alpaca.data.historical import StockHistoricalDataClient; from alpaca.data.requests import StockBarsRequest; from alpaca.data.timeframe import TimeFrame; print\\('data ok'\\)\")",
+      "Bash(python -m pytest tests/test_alpaca_client.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows tests/test_performance.py -v --tb=short)",
+      "Bash(python -c ' *)"
     ]
   }
 }
