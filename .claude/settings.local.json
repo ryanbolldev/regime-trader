@@ -13,7 +13,8 @@
       "Bash(python -c \"from alpaca.data.historical import StockHistoricalDataClient; from alpaca.data.requests import StockBarsRequest; from alpaca.data.timeframe import TimeFrame; print\\('data ok'\\)\")",
       "Bash(python -m pytest tests/test_alpaca_client.py -v --tb=short)",
       "Bash(python -m pytest tests/test_backtester.py::TestComputeWindows tests/test_performance.py -v --tb=short)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/test_main.py -v --tb=short)"
     ]
   }
 }
