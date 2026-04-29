@@ -3,23 +3,151 @@ core/order_executor.py
 -----------------------
 Translates approved trade signals into broker API calls.
 
-Responsibilities:
-  - Submit market, limit, and stop orders via the broker client
-  - Modify open orders (price / quantity adjustments)
-  - Cancel open orders individually or in bulk (e.g., on circuit-breaker close)
-  - Implement order retry logic with exponential back-off for transient API
-    errors; give up after MAX_RETRIES and fire an alert
-  - Enforce rate limiting so the bot never exceeds the broker's API quota
-  - Record every order attempt, response, and fill to the execution log
-  - Emit events consumed by position_tracker.py upon fill confirmation
-
-The executor is broker-agnostic at this layer; it depends on the abstract
-BrokerClient interface, with AlpacaClient as the live implementation.
-
-Public interface (to be implemented):
-  submit(order_request) -> OrderResult
-  cancel(order_id) -> bool
-  cancel_all() -> list[bool]
-  modify(order_id, new_price, new_qty) -> OrderResult
-  get_open_orders() -> list[Order]
+Public interface:
+  submit(signal, client=None, *, symbol="") -> OrderResult | None
+  cancel(order_id, client=None) -> bool
+  cancel_all(client=None) -> list[bool]
 """
+
+from __future__ import annotations
+
+import logging
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from broker.alpaca_client import AlpacaClient, OrderResult
+    from core.regime_strategies import Signal
+
+from core.wheel_strategy import WheelActionType
+
+log = logging.getLogger(__name__)
+
+_client: Optional[AlpacaClient] = None
+
+
+def _get_client() -> AlpacaClient:
+    global _client
+    if _client is None:
+        from broker.alpaca_client import AlpacaClient
+        _client = AlpacaClient()
+    return _client
+
+
+def submit(
+    signal: Signal,
+    client: Optional[AlpacaClient] = None,
+    *,
+    symbol: str = "",
+) -> Optional[OrderResult]:
+    """Submit an order derived from signal.
+
+    Returns None when the signal calls for no action (WAIT / SIT_OUT wheel
+    actions, zero position size, or equity signals without a symbol).
+    """
+    c = client if client is not None else _get_client()
+
+    if signal.wheel_action is not None:
+        return _submit_wheel_order(signal, c)
+
+    return _submit_equity_order(signal, c, symbol)
+
+
+def _submit_wheel_order(signal: Signal, client: AlpacaClient) -> Optional[OrderResult]:
+    action = signal.wheel_action
+
+    if action.action in (WheelActionType.WAIT, WheelActionType.SIT_OUT):
+        log.debug(
+            "No wheel order: action=%s reason=%s",
+            action.action.value, action.reason,
+        )
+        return None
+
+    contract = action.contract
+    if contract is None:
+        log.warning("Wheel action %s has no contract — skipping", action.action.value)
+        return None
+
+    if action.action in (WheelActionType.SELL_PUT, WheelActionType.SELL_CALL):
+        side = "sell"
+    elif action.action == WheelActionType.CLOSE:
+        side = "buy"
+    else:
+        log.warning("Unhandled wheel action: %s", action.action)
+        return None
+
+    log.info(
+        "Wheel order: symbol=%s side=%s qty=1 action=%s regime=%s",
+        contract.symbol, side, action.action.value, signal.regime_name,
+    )
+    return client.submit_order(
+        symbol=contract.symbol,
+        qty=1.0,
+        side=side,
+        order_type="market",
+    )
+
+
+def _submit_equity_order(
+    signal: Signal,
+    client: AlpacaClient,
+    symbol: str,
+) -> Optional[OrderResult]:
+    if not symbol:
+        log.warning("Equity order has no symbol — skipping")
+        return None
+
+    if signal.position_size_usd <= 0:
+        log.debug(
+            "Position size $0 for %s regime=%s — skipping",
+            symbol, signal.regime_name,
+        )
+        return None
+
+    # Guard: regime must allow long equity positions.
+    from core.regime_strategies import _PROFILES
+    profile = _PROFILES.get(signal.regime)
+    if profile is not None and not profile.allow_long:
+        log.debug(
+            "Regime %s (allow_long=False) — skipping equity buy for %s",
+            signal.regime_name, symbol,
+        )
+        return None
+
+    # Guard: reject orders that would exceed available buying power.
+    try:
+        from core import position_tracker
+        nav = position_tracker.get_nav(client)
+    except Exception as exc:
+        log.warning("Could not fetch NAV for buying-power check: %s — skipping", exc)
+        return None
+
+    if signal.position_size_usd > nav:
+        log.warning(
+            "Order skipped: size $%.2f exceeds NAV $%.2f for %s regime=%s",
+            signal.position_size_usd, nav, symbol, signal.regime_name,
+        )
+        return None
+
+    log.info(
+        "Equity order: symbol=%s side=buy size=$%.2f regime=%s",
+        symbol, signal.position_size_usd, signal.regime_name,
+    )
+    return client.submit_order(
+        symbol=symbol,
+        qty=signal.position_size_usd,
+        side="buy",
+        order_type="market",
+    )
+
+
+def cancel(order_id: str, client: Optional[AlpacaClient] = None) -> bool:
+    """Cancel a single order by ID. Returns True if cancelled, False if not found."""
+    c = client if client is not None else _get_client()
+    return c.cancel_order(order_id)
+
+
+def cancel_all(client: Optional[AlpacaClient] = None) -> list[bool]:
+    """Cancel all open orders. Returns a per-order list of cancel results."""
+    c = client if client is not None else _get_client()
+    orders = c.get_orders()
+    return [c.cancel_order(o.order_id) for o in orders]

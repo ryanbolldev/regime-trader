@@ -6,7 +6,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./logs:/app/logs
-    restart: on-failure
+    restart: "no"
 
   dashboard:
     build: .
@@ -19,4 +19,4 @@ services:
       - ./logs:/app/logs
     ports:
       - "8501:8501"
-    restart: on-failure
+    restart: "no"

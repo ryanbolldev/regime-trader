@@ -307,22 +307,16 @@ class CrashStrategy(StrategyBase):
 
 
 class BearStrategy(StrategyBase):
-    """30 % allocation, reduced long exposure, defensive sectors."""
+    """30 % allocation, reduced long exposure, defensive sectors. No new equity entries."""
 
     regime_label = "bear"
-    allow_long   = True
+    allow_long   = False
     allow_short  = False
 
     def get_target_positions(
-        self, _nav: float, _current_positions: dict[str, float], tickers: list[str]
+        self, _nav: float, _current_positions: dict[str, float], _tickers: list[str]
     ) -> list[TargetPosition]:
-        profile = _PROFILES[1]
-        per_weight = profile.allocation_pct / profile.max_new_positions
-        return [
-            TargetPosition(ticker=t, direction="long",
-                           target_weight=per_weight, signal_type="defensive")
-            for t in tickers[:profile.max_new_positions]
-        ]
+        return []
 
     def get_exit_signals(
         self, open_positions: dict[str, float], _market_data: dict[str, dict]

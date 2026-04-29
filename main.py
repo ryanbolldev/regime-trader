@@ -154,7 +154,10 @@ class RegimeTrader:
 
         # Step 3: verify account
         acct = self._client.get_account()
-        if str(acct.status).upper() not in {"ACTIVE", "APPROVED"}:
+        # str() handles both plain strings and enum forms like "AccountStatus.ACTIVE";
+        # split on "." and take the last segment so either form compares correctly.
+        status_str = str(acct.status).split(".")[-1].upper()
+        if status_str not in {"ACTIVE", "APPROVED"}:
             raise RuntimeError(
                 f"Alpaca account not tradeable: status={acct.status!r}"
             )
@@ -328,7 +331,7 @@ class RegimeTrader:
         # Execute order
         try:
             size = signal.position_size_usd * approval.size_multiplier
-            order_result = order_executor.submit(signal)
+            order_result = order_executor.submit(signal, symbol=ticker)
             log.info(
                 "Trade placed: %s  side=buy  size=$%.2f  regime=%s  request_id=%s",
                 ticker, size, signal.regime_name,

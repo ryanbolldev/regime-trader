@@ -20,7 +20,16 @@
       "Bash(python -m pytest tests/ -v --tb=short)",
       "Bash(python -m pytest tests/ --tb=short)",
       "Bash(python -m pytest tests/test_wheel_strategy.py -v)",
-      "Bash(python -m pytest tests/ --tb=short -q)"
+      "Bash(python -m pytest tests/ --tb=short -q)",
+      "Bash(make down *)",
+      "Bash(make build *)",
+      "Bash(make up *)",
+      "Bash(python -m pytest tests/test_main.py -q)",
+      "Bash(python -m pytest tests/test_main.py::TestStartup::test_inactive_account_raises_runtime_error tests/test_main.py::TestStartup::test_approved_account_status_also_proceeds -v)",
+      "Bash(python -c \"from alpaca.data.historical import StockHistoricalDataClient; from alpaca.data.requests import StockBarsRequest, StockLatestBarRequest; from alpaca.data.timeframe import TimeFrame, TimeFrameUnit; print\\('imports ok'\\)\")",
+      "Bash(python -m pytest tests/test_market_data.py -q)",
+      "Bash(python -m pytest tests/test_market_data.py::TestGetLatestBars::test_passes_timeframe_to_historical -v -s)",
+      "Bash(python -m pytest -q)"
     ]
   }
 }

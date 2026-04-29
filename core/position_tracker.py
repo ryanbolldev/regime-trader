@@ -36,10 +36,30 @@ Wheel extensions:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from core.wheel_strategy import WheelPosition, WheelState
+
+if TYPE_CHECKING:
+    from broker.alpaca_client import AlpacaClient, BrokerPosition, OrderResult
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level broker client singleton (replaced with mocks in tests)
+# ---------------------------------------------------------------------------
+
+_broker_client: Optional[AlpacaClient] = None
+
+
+def _get_client() -> AlpacaClient:
+    global _broker_client
+    if _broker_client is None:
+        from broker.alpaca_client import AlpacaClient
+        _broker_client = AlpacaClient()
+    return _broker_client
 
 
 # ---------------------------------------------------------------------------
@@ -162,4 +182,38 @@ def update_on_close(symbol: str, closing_cost: float) -> None:
         premium_collected_total=existing.premium_collected_total - closing_cost,
         entry_regime=existing.entry_regime,
         timestamp=datetime.now(tz=timezone.utc),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Broker-backed portfolio functions
+# ---------------------------------------------------------------------------
+
+def get_open_positions(client: Optional[AlpacaClient] = None) -> list[BrokerPosition]:
+    """Return live open positions from the broker."""
+    c = client if client is not None else _get_client()
+    return c.get_positions()
+
+
+def get_nav(client: Optional[AlpacaClient] = None) -> float:
+    """Return current portfolio NAV from the broker account."""
+    c = client if client is not None else _get_client()
+    return c.get_account().portfolio_value
+
+
+def get_daily_pnl(client: Optional[AlpacaClient] = None) -> float:
+    """Return today's unrealized P&L summed across all open positions."""
+    positions = get_open_positions(client)
+    return sum(p.unrealized_pl for p in positions)
+
+
+def on_fill(order_result: OrderResult) -> None:
+    """Record a fill event. Called by the main loop after order submission."""
+    log.info(
+        "Fill: order_id=%s symbol=%s side=%s qty=%s status=%s",
+        order_result.order_id,
+        order_result.symbol,
+        order_result.side,
+        order_result.filled_qty,
+        order_result.status,
     )

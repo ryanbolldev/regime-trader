@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=appuser:appgroup . .
 
 RUN mkdir -p /app/logs \
-    && chown appuser:appgroup /app/logs
+    && chown -R appuser:appgroup /app
 
 USER appuser
 
