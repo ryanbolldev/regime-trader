@@ -128,13 +128,30 @@ def _submit_equity_order(
         )
         return None
 
+    # Convert dollar size to whole-share quantity using the latest bar price.
+    try:
+        from core.market_data import get_latest_bar
+        bar = get_latest_bar(symbol)
+        current_price = float(bar["close"])
+    except Exception as exc:
+        log.warning("Could not fetch price for %s: %s — skipping", symbol, exc)
+        return None
+
+    shares = int(signal.position_size_usd / current_price)
+    if shares < 1:
+        log.debug(
+            "Size $%.2f < 1 share at $%.2f for %s — skipping",
+            signal.position_size_usd, current_price, symbol,
+        )
+        return None
+
     log.info(
-        "Equity order: symbol=%s side=buy size=$%.2f regime=%s",
-        symbol, signal.position_size_usd, signal.regime_name,
+        "Equity order: symbol=%s side=buy shares=%d ($%.2f @ $%.2f) regime=%s",
+        symbol, shares, signal.position_size_usd, current_price, signal.regime_name,
     )
     return client.submit_order(
         symbol=symbol,
-        qty=signal.position_size_usd,
+        qty=float(shares),
         side="buy",
         order_type="market",
     )

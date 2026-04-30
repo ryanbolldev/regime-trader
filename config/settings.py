@@ -23,7 +23,8 @@ Never place API keys or secrets in this file.
 # ---------------------------------------------------------------------------
 # Universe
 # ---------------------------------------------------------------------------
-TICKERS = ["SPY", "MSTR"]
+TICKERS           = ["SPY", "MSTR", "CVX"]
+REFERENCE_TICKERS = ["SPY"]   # run HMM for regime context but never trade
 
 # ---------------------------------------------------------------------------
 # HMM model selection
@@ -99,7 +100,7 @@ ONCHAIN_CACHE_SECONDS = 300
 # ---------------------------------------------------------------------------
 # Wheel strategy
 # ---------------------------------------------------------------------------
-WHEEL_TICKERS               = ["SPY"]
+WHEEL_TICKERS               = ["MSTR", "CVX"]
 WHEEL_PUT_DELTA_TARGET      = -0.28   # target delta for put selection
 WHEEL_CALL_DELTA_TARGET     =  0.28   # target delta for call selection
 WHEEL_MIN_DTE               =  30     # minimum days to expiration

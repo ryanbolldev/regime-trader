@@ -322,14 +322,15 @@ class TestBarProcessing:
     def test_trade_placed_alert_includes_ticker_and_regime(
         self, trader, mock_hmm, patch_modules
     ):
-        from config.settings import TICKERS
+        from config.settings import TICKERS, REFERENCE_TICKERS
+        tradeable = next(t for t in TICKERS if t not in REFERENCE_TICKERS)
         trader._current_regime = 2
         mock_hmm.predict_current.return_value = 3
         mock_hmm.regime_name.return_value = "bull"
         trader._run_bar()
         alert_msgs = [c.args[1] for c in patch_modules["al"].send.call_args_list
                       if c.args[0] == "trade_placed"]
-        assert any(TICKERS[0] in msg for msg in alert_msgs)
+        assert any(tradeable in msg for msg in alert_msgs)
 
     def test_position_tracker_on_fill_called_after_order(
         self, trader, mock_hmm, mock_risk, patch_modules

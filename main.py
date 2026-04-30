@@ -311,6 +311,10 @@ class RegimeTrader:
             log.debug("%s: no regime confirmed yet, skipping signal", ticker)
             return
 
+        if ticker in settings.REFERENCE_TICKERS:
+            log.debug("%s: reference ticker — regime context only, no trade", ticker)
+            return
+
         # Build signal
         try:
             nav = float(position_tracker.get_nav())
@@ -326,7 +330,7 @@ class RegimeTrader:
             confidence        = confidence,
             portfolio_nav     = nav,
             current_allocation= 0.0,
-            is_uncertain      = self._hmm.is_uncertain(),
+            is_uncertain      = engine.is_uncertain(),
         )
 
         # Risk gate
