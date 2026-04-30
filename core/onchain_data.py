@@ -28,6 +28,7 @@ from typing import Optional
 import requests
 
 from config.settings import ONCHAIN_CACHE_SECONDS
+from core import alerts
 
 log = logging.getLogger(__name__)
 
@@ -268,11 +269,6 @@ def fire_signal_if_threshold(score: float, prev_score: float) -> None:
     Crossing above +0.5 → bullish signal.
     Crossing below -0.5 → bearish signal.
     """
-    try:
-        from core import alerts
-    except Exception:
-        return
-
     if prev_score < _BULLISH_THRESHOLD <= score:
         msg = f"On-chain signal: BULLISH (score={score:.3f})"
         log.info(msg)
