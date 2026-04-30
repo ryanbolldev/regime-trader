@@ -25,10 +25,14 @@ Public interface:
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from config.settings import RSI_PERIOD, VOL_WINDOW, VOLUME_WINDOW
+
+log = logging.getLogger(__name__)
 
 
 class LookaheadBiasError(Exception):
@@ -58,18 +62,23 @@ def _rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
 # Public API
 # ---------------------------------------------------------------------------
 
-def compute(ohlcv_df: pd.DataFrame) -> pd.DataFrame:
+def compute(ohlcv_df: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
     """Return a DataFrame of features aligned to ohlcv_df's index.
 
     Parameters
     ----------
     ohlcv_df : DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
                and a DatetimeIndex, sorted ascending.
+    symbol   : Ticker symbol. When 'MSTR' and ONCHAIN_ENABLED is True, an
+               additional 'on_chain_score' column is appended (filled with 0.0
+               as a neutral placeholder; the live value is injected by
+               compute_latest()).
 
     Returns
     -------
     DataFrame with columns:
         log_return, realized_vol_20, volume_zscore, hl_range_norm, rsi_14
+        [+ on_chain_score when symbol=='MSTR' and ONCHAIN_ENABLED]
     All rows before the warm-up period are NaN; caller should dropna().
     """
     df = ohlcv_df.copy()
@@ -111,13 +120,41 @@ def compute(ohlcv_df: pd.DataFrame) -> pd.DataFrame:
         },
         index=df.index,
     )
+
+    # MSTR on-chain score: 0.0 placeholder for historical rows; live value
+    # is injected by compute_latest() so the HMM feature shape stays consistent.
+    if symbol.upper() == "MSTR":
+        try:
+            from config.settings import ONCHAIN_ENABLED
+            if ONCHAIN_ENABLED:
+                features["on_chain_score"] = 0.0
+        except Exception:
+            pass
+
     return features
 
 
-def compute_latest(ohlcv_df: pd.DataFrame) -> pd.Series:
-    """Return the feature vector for the most recent bar only."""
-    features = compute(ohlcv_df)
-    return features.iloc[-1]
+def compute_latest(ohlcv_df: pd.DataFrame, symbol: str = "") -> pd.Series:
+    """Return the feature vector for the most recent bar only.
+
+    When symbol is 'MSTR' and ONCHAIN_ENABLED is True, the on_chain_score
+    placeholder is replaced with the current live value from get_onchain_features().
+    """
+    row = compute(ohlcv_df, symbol=symbol).iloc[-1]
+
+    if symbol.upper() == "MSTR":
+        try:
+            from config.settings import ONCHAIN_ENABLED
+            if ONCHAIN_ENABLED:
+                from core.onchain_data import get_onchain_features
+                oc = get_onchain_features()
+                row = row.copy()
+                row["on_chain_score"] = oc.on_chain_score
+                log.debug("MSTR on_chain_score=%.3f", oc.on_chain_score)
+        except Exception as exc:
+            log.warning("on-chain feature injection failed: %s", exc)
+
+    return row
 
 
 def validate_no_lookahead(

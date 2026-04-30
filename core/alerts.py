@@ -59,6 +59,7 @@ _CANONICAL: dict[str, str] = {
     "api_outage":       "CIRCUIT_BREAKER",
     "data_feed_drop":   "CIRCUIT_BREAKER",
     "critical_error":   "CIRCUIT_BREAKER",
+    "onchain_signal":   "ONCHAIN_SIGNAL",
 }
 
 
