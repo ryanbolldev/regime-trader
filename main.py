@@ -106,14 +106,15 @@ class RegimeTrader:
         self,
         *,
         client: AlpacaClient,
-        hmm: HMMEngine,
+        hmm: Optional[HMMEngine] = None,
         risk_manager: RiskManager,
         lockfile: Path = LOCKFILE,
         bar_interval: int = BAR_INTERVAL_SECS,
         close_positions_on_shutdown: bool = False,
     ) -> None:
         self._client       = client
-        self._hmm          = hmm
+        self._hmm          = hmm        # fallback used when _hmm_engines is empty (tests)
+        self._hmm_engines: dict[str, HMMEngine] = {}  # populated in startup()
         self._risk         = risk_manager
         self._lockfile     = lockfile
         self._bar_interval = bar_interval
@@ -171,14 +172,18 @@ class RegimeTrader:
         self._market_was_open = is_open
         log.info("Market is currently: %s", "OPEN" if is_open else "CLOSED")
 
-        # Step 5: train HMM on 2 years of daily SPY data
-        log.info("Fetching 2 years of daily SPY bars for HMM training…")
+        # Step 5: train one HMMEngine per ticker on 2 years of daily data
         end   = datetime.now(tz=timezone.utc)
         start = end - timedelta(days=730)
-        ohlcv    = market_data.get_historical_bars("SPY", start, end, "1Day")
-        features = feature_engineering.compute(ohlcv)
-        self._hmm.fit(features)
-        log.info("HMM trained successfully")
+        for ticker in settings.TICKERS:
+            log.info("Fetching 2 years of daily %s bars for HMM training…", ticker)
+            ohlcv    = market_data.get_historical_bars(ticker, start, end, "1Day")
+            features = feature_engineering.compute(ohlcv)
+            engine   = HMMEngine(ticker)
+            engine.fit(features)
+            self._hmm_engines[ticker] = engine
+            log.info("HMM [%s] trained successfully", ticker)
+        log.info("HMM engines ready: %s", list(self._hmm_engines))
 
         # Step 6: initialize risk manager
         nav = float(acct.portfolio_value)
@@ -273,9 +278,13 @@ class RegimeTrader:
             return  # feed dropped; alert already fired in _fetch_bars_with_retry
 
         # Feature engineering + HMM prediction
+        engine = self._hmm_engines.get(ticker, self._hmm)
+        if engine is None:
+            log.warning("No HMM engine for %s — skipping bar", ticker)
+            return
         try:
             features_row = feature_engineering.compute_latest(ohlcv)
-            regime       = self._hmm.predict_current(features_row)
+            regime       = engine.predict_current(features_row)
         except Exception as exc:
             log.warning(
                 "HMM prediction failed for %s: %s — skipping bar", ticker, exc
@@ -286,10 +295,10 @@ class RegimeTrader:
         if regime != -1 and regime != self._current_regime:
             prev = self._current_regime
             self._current_regime = regime
-            regime_name = self._hmm.regime_name(regime)
+            regime_name = engine.regime_name(regime)
             log.info(
-                "Regime change: %s → %s (%s)",
-                _REGIME_NAMES.get(prev, str(prev)), regime_name, ticker,
+                "HMM [%s] regime change: %s → %s",
+                ticker, _REGIME_NAMES.get(prev, str(prev)), regime_name,
             )
             alerts.send(
                 "regime_change",
@@ -309,7 +318,7 @@ class RegimeTrader:
             nav = float(self._client.get_account().portfolio_value)
 
         confidence = (
-            0.8 if self._hmm.is_confirmed() and not self._hmm.is_uncertain()
+            0.8 if engine.is_confirmed() and not engine.is_uncertain()
             else 0.5
         )
         signal = regime_strategies.get_signal(
@@ -441,7 +450,6 @@ def main() -> None:
 
     _trader = RegimeTrader(
         client       = client,
-        hmm          = HMMEngine(),
         risk_manager = RiskManager(),
     )
 

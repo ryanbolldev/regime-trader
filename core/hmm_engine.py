@@ -72,11 +72,14 @@ class HMMEngine:
 
     def __init__(
         self,
+        symbol: str = "",
+        *,
         confirmation_bars: int = CONFIRMATION_BARS,
         flicker_window: int = FLICKER_WINDOW,
         flicker_threshold: int = FLICKER_THRESHOLD,
         train_bars: int = HMM_TRAIN_BARS,
     ) -> None:
+        self.symbol             = symbol
         self.confirmation_bars  = confirmation_bars
         self.flicker_window     = flicker_window
         self.flicker_threshold  = flicker_threshold
@@ -129,19 +132,19 @@ class HMMEngine:
                 )
                 model.fit(X)
                 bic = _bic(model, X)
-                log.debug("n_states=%d  BIC=%.2f", n, bic)
+                log.debug("HMM [%s] n_states=%d  BIC=%.2f", self.symbol, n, bic)
                 if bic < best_bic:
                     best_bic   = bic
                     best_model = model
             except Exception as exc:  # noqa: BLE001
-                log.warning("HMM fit failed for n_states=%d: %s", n, exc)
+                log.warning("HMM [%s] fit failed for n_states=%d: %s", self.symbol, n, exc)
 
         if best_model is None:
             raise RuntimeError("All HMM candidate fits failed.")
 
         self._model   = best_model
         self._n_states = best_model.n_components
-        log.info("HMM selected n_states=%d  BIC=%.2f", self._n_states, best_bic)
+        log.info("HMM [%s] selected n_states=%d  BIC=%.2f", self.symbol, self._n_states, best_bic)
 
         # Build state → regime mapping sorted by mean return (first feature column)
         means = best_model.means_[:, 0]  # mean log-return per state
@@ -151,7 +154,7 @@ class HMMEngine:
             int(state): _map_regime_label(rank, n)
             for rank, state in enumerate(sorted_states)
         }
-        log.info("State→regime mapping: %s", self._state_to_regime)
+        log.info("HMM [%s] state→regime mapping: %s", self.symbol, self._state_to_regime)
 
     # ------------------------------------------------------------------
     # Prediction (forward algorithm only)

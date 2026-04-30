@@ -92,7 +92,7 @@ def tmp_lockfile(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def patch_modules(monkeypatch) -> dict:
+def patch_modules(monkeypatch, mock_hmm) -> dict:
     """Replace every stub module with a MagicMock for the duration of each test."""
     ohlcv  = _synthetic_ohlcv()
     series = MagicMock(spec=pd.Series)
@@ -115,13 +115,18 @@ def patch_modules(monkeypatch) -> dict:
     pt.get_daily_pnl.return_value   = 500.0
     pt.get_open_positions.return_value = []
 
+    # Patch HMMEngine constructor so startup() returns the shared mock instead
+    # of creating real engines that would fail fitting on MagicMock feature data.
+    hmm_cls = MagicMock(return_value=mock_hmm)
+    monkeypatch.setattr("main.HMMEngine", hmm_cls)
+
     monkeypatch.setattr("main.market_data",        md)
     monkeypatch.setattr("main.feature_engineering", fe)
     monkeypatch.setattr("main.alerts",             al)
     monkeypatch.setattr("main.order_executor",     oe)
     monkeypatch.setattr("main.position_tracker",   pt)
 
-    return {"md": md, "fe": fe, "al": al, "oe": oe, "pt": pt}
+    return {"md": md, "fe": fe, "al": al, "oe": oe, "pt": pt, "hmm_cls": hmm_cls}
 
 
 @pytest.fixture()
@@ -197,18 +202,21 @@ class TestStartup:
         trader.startup()   # should not raise
 
     def test_hmm_training_fetches_historical_bars(self, trader, patch_modules):
+        from config.settings import TICKERS
         trader.startup()
-        patch_modules["md"].get_historical_bars.assert_called_once()
-        call_args = patch_modules["md"].get_historical_bars.call_args
-        assert call_args.args[0] == "SPY"
-        assert call_args.args[3] == "1Day"
+        md = patch_modules["md"]
+        assert md.get_historical_bars.call_count == len(TICKERS)
+        called_symbols = {c.args[0] for c in md.get_historical_bars.call_args_list}
+        assert called_symbols == set(TICKERS)
+        assert all(c.args[3] == "1Day" for c in md.get_historical_bars.call_args_list)
 
     def test_hmm_fit_called_with_computed_features(
         self, trader, mock_hmm, patch_modules
     ):
+        from config.settings import TICKERS
         trader.startup()
-        patch_modules["fe"].compute.assert_called_once()
-        mock_hmm.fit.assert_called_once()
+        assert patch_modules["fe"].compute.call_count == len(TICKERS)
+        assert mock_hmm.fit.call_count == len(TICKERS)
 
     def test_risk_manager_initialized_with_account_nav(
         self, trader, mock_risk, mock_client

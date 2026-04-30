@@ -29,7 +29,8 @@
       "Bash(python -c \"from alpaca.data.historical import StockHistoricalDataClient; from alpaca.data.requests import StockBarsRequest, StockLatestBarRequest; from alpaca.data.timeframe import TimeFrame, TimeFrameUnit; print\\('imports ok'\\)\")",
       "Bash(python -m pytest tests/test_market_data.py -q)",
       "Bash(python -m pytest tests/test_market_data.py::TestGetLatestBars::test_passes_timeframe_to_historical -v -s)",
-      "Bash(python -m pytest -q)"
+      "Bash(python -m pytest -q)",
+      "Bash(python -m pytest tests/test_hmm_engine.py tests/test_market_data.py -q)"
     ]
   }
 }

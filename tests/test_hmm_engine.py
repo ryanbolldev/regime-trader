@@ -39,8 +39,8 @@ def _make_ohlcv(n_bars: int = 600, seed: int = 0) -> pd.DataFrame:
     )
 
 
-def _fitted_engine(n_bars: int = 600) -> tuple[HMMEngine, pd.DataFrame]:
-    ohlcv    = _make_ohlcv(n_bars)
+def _fitted_engine(n_bars: int = 600, seed: int = 0) -> tuple[HMMEngine, pd.DataFrame]:
+    ohlcv    = _make_ohlcv(n_bars, seed=seed)
     features = compute(ohlcv).dropna()
     engine   = HMMEngine()
     engine.fit(features)
@@ -365,3 +365,53 @@ class TestRegimeLabelMapping:
         engine = HMMEngine()
         for label in range(5):
             assert isinstance(engine.regime_name(label), str)
+
+
+# ---------------------------------------------------------------------------
+# Per-ticker symbol attribute and independence
+# ---------------------------------------------------------------------------
+
+class TestPerTickerSymbol:
+
+    def test_symbol_stored_on_instance(self):
+        engine = HMMEngine("MSTR")
+        assert engine.symbol == "MSTR"
+
+    def test_default_symbol_is_empty_string(self):
+        engine = HMMEngine()
+        assert engine.symbol == ""
+
+    def test_symbol_does_not_affect_fit_behaviour(self):
+        ohlcv    = _make_ohlcv(600)
+        features = compute(ohlcv).dropna()
+        e1 = HMMEngine("SPY")
+        e2 = HMMEngine("MSTR")
+        e1.fit(features)
+        e2.fit(features)
+        assert e1._n_states == e2._n_states
+
+    def test_two_engines_have_independent_histories(self):
+        engine_a, features = _fitted_engine()
+        engine_b, _        = _fitted_engine(seed=1)
+        clean = features.dropna()
+
+        engine_a.predict_current(clean.iloc[-1])
+        assert len(engine_a.regime_history()) == 1
+        assert len(engine_b.regime_history()) == 0  # b unaffected by a's call
+
+        engine_b.predict_current(clean.iloc[-1])
+        assert len(engine_a.regime_history()) == 1  # a unaffected by b's call
+        assert len(engine_b.regime_history()) == 1
+
+    def test_two_engines_independent_confirmed_state(self):
+        engine_a, features = _fitted_engine()
+        engine_b, _        = _fitted_engine(seed=99)
+        clean = features.dropna()
+
+        # Drive engine_a to a confirmed state
+        for i in range(CONFIRMATION_BARS + 1):
+            engine_a.predict_current(clean.iloc[i])
+
+        # engine_b's confirmation gate must remain independent
+        assert engine_b._pending_count == 0
+        assert engine_b._confirmed_regime is None
