@@ -60,6 +60,7 @@ _CANONICAL: dict[str, str] = {
     "data_feed_drop":   "CIRCUIT_BREAKER",
     "critical_error":   "CIRCUIT_BREAKER",
     "onchain_signal":   "ONCHAIN_SIGNAL",
+    "cycle_signal":     "CYCLE_SIGNAL",
 }
 
 
@@ -139,20 +140,31 @@ def send_email(subject: str, body: str) -> None:
         smtp.sendmail(user, recipients, msg.as_string())
 
 
-def send(event_type: str, message: str, severity: str = "info") -> None:
-    """Dispatch an alert to all configured channels, respecting cooldown.
+def send(
+    event_type: str,
+    message: str,
+    severity: str = "info",
+    *,
+    symbol: str = "",
+) -> None:
+    """Dispatch an alert to all configured channels, respecting per-symbol cooldown.
 
-    Silently suppresses if the same event_type was sent within the cooldown
-    window.  Never raises — channel errors are logged as warnings.
+    The cooldown key is ``event_type:symbol`` so each ticker fires independently.
+    Callers that omit symbol use an empty-symbol key and share one cooldown bucket.
+    Never raises — channel errors are logged as warnings.
     """
+    cooldown_key = f"{event_type}:{symbol}"
     cooldown = _cooldown_for(event_type)
-    last     = _last_sent.get(event_type)  # None (key absent) == never sent
+    last     = _last_sent.get(cooldown_key)  # None (key absent) == never sent
 
     if last is not None and (time.monotonic() - last) < cooldown:
-        log.debug("Alert suppressed (cooldown active): event=%s", event_type)
+        log.debug(
+            "Alert suppressed (cooldown active): event=%s symbol=%s",
+            event_type, symbol or "(none)",
+        )
         return
 
-    _last_sent[event_type] = time.monotonic()
+    _last_sent[cooldown_key] = time.monotonic()
 
     canonical = _CANONICAL.get(event_type, event_type.upper())
     payload: dict[str, Any] = {
@@ -177,3 +189,44 @@ def send(event_type: str, message: str, severity: str = "info") -> None:
         pass
     except Exception as exc:
         log.warning("Email error: %s", exc)
+
+
+def send_cycle_alert(signal: object, prev_score: float = 0.0) -> None:
+    """Fire a CYCLE_SIGNAL alert on composite_score threshold crossing or failed cycle.
+
+    signal must be a CycleSignal dataclass instance. Using 'object' to avoid
+    a circular import; duck-typing is safe here.
+    """
+    try:
+        from config.settings import CYCLE_COMPOSITE_THRESHOLD
+
+        failed   = getattr(signal, "failed_cycle", False)
+        score    = float(getattr(signal, "composite_score", 0.0))
+        crossing = prev_score < CYCLE_COMPOSITE_THRESHOLD <= score
+
+        if not (failed or crossing):
+            return
+
+        translation_map = {"right": "right (bullish)", "left": "left (bearish)"}
+        translation_str = translation_map.get(
+            getattr(signal, "translation", "unknown"), "unknown"
+        )
+
+        severity = "critical" if failed else "info"
+        msg = (
+            "🔄 CYCLE SIGNAL\n"
+            f"60-Day Timing Probability: {getattr(signal, 'timing_probability', 0.0) * 100:.1f}%\n"
+            f"Donchian Score: {getattr(signal, 'donchian_score', 0.0) * 100:.1f}%\n"
+            f"Gaussian Score: {getattr(signal, 'gaussian_score', 0.0) * 100:.1f}%\n"
+            f"Bollinger Score: {getattr(signal, 'bollinger_score', 0.0) * 100:.1f}%\n"
+            f"Price Confirmation: {getattr(signal, 'price_confirmation', 0.0) * 100:.1f}%\n"
+            f"Composite Score: {score * 100:.1f}%\n"
+            f"Translation: {translation_str}\n"
+            f"Days Since Low: {getattr(signal, 'days_since_last_low', 0)} "
+            f"of ~{getattr(signal, 'adaptive_window_center', 60)}\n"
+            f"Macro Phase: {getattr(signal, 'macro_phase', 'unknown')}\n"
+            f"Bias: {getattr(signal, 'bias', 'neutral')}"
+        )
+        send("cycle_signal", msg, severity)
+    except Exception as exc:
+        log.warning("Cycle alert error: %s", exc)

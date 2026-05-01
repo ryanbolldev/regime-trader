@@ -128,6 +128,13 @@ def _submit_equity_order(
         )
         return None
 
+    # Guard: skip if an open order or position already exists for this symbol.
+    if _has_existing_order_or_position(symbol, client):
+        log.warning(
+            "Skipping %s: existing open order or position already found", symbol
+        )
+        return None
+
     # Convert dollar size to whole-share quantity using the latest bar price.
     try:
         from core.market_data import get_latest_bar
@@ -155,6 +162,25 @@ def _submit_equity_order(
         side="buy",
         order_type="market",
     )
+
+
+def _has_existing_order_or_position(symbol: str, client: AlpacaClient) -> bool:
+    """Return True if there is already an open order or live position for symbol."""
+    try:
+        orders = client.get_orders()
+        if any(o.symbol.upper() == symbol.upper() for o in orders):
+            return True
+    except Exception as exc:
+        log.warning("Could not check existing orders for %s: %s", symbol, exc)
+
+    try:
+        positions = client.get_positions()
+        if any(p.symbol.upper() == symbol.upper() for p in positions):
+            return True
+    except Exception as exc:
+        log.warning("Could not check existing positions for %s: %s", symbol, exc)
+
+    return False
 
 
 def cancel(order_id: str, client: Optional[AlpacaClient] = None) -> bool:

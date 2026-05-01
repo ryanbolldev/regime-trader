@@ -23,8 +23,8 @@ Never place API keys or secrets in this file.
 # ---------------------------------------------------------------------------
 # Universe
 # ---------------------------------------------------------------------------
-TICKERS           = ["SPY", "MSTR", "CVX"]
-REFERENCE_TICKERS = ["SPY"]   # run HMM for regime context but never trade
+TICKERS           = ["SPY", "MSTR", "CVX", "BTC"]
+REFERENCE_TICKERS = ["SPY", "BTC"]   # run HMM for regime context but never trade
 
 # ---------------------------------------------------------------------------
 # HMM model selection
@@ -96,6 +96,20 @@ ALERT_COOLDOWN_SECONDS = 300
 # ---------------------------------------------------------------------------
 ONCHAIN_ENABLED       = True
 ONCHAIN_CACHE_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# Cycle detection (60-day BTC cycle)
+# ---------------------------------------------------------------------------
+CYCLE_60D_CENTER           = 60
+CYCLE_60D_STD              = 12
+CYCLE_4Y_CENTER            = 1458    # ~4 years in days
+CYCLE_4Y_STD               = 120
+CYCLE_LOW_CONFIRMATION_PCT = 0.10    # price must rise >10% to confirm a low
+CYCLE_COMPOSITE_THRESHOLD  = 0.65
+CYCLE_QUALITY_LOOKBACK     = 3
+CYCLE_DONCHIAN_WEIGHT      = 0.40
+CYCLE_GAUSSIAN_WEIGHT      = 0.35
+CYCLE_BOLLINGER_WEIGHT     = 0.25
 
 # ---------------------------------------------------------------------------
 # Wheel strategy

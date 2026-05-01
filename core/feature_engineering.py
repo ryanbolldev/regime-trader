@@ -131,6 +131,16 @@ def compute(ohlcv_df: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
         except Exception:
             pass
 
+    # BTC cycle features: 0.0 placeholders for historical rows.
+    if symbol.upper() == "BTC":
+        features["timing_probability"]   = 0.0
+        features["cycle_completion_pct"] = 0.0
+        features["failed_cycle"]         = 0.0
+        features["composite_score"]      = 0.0
+        features["donchian_score"]       = 0.0
+        features["gaussian_score"]       = 0.0
+        features["bollinger_score"]      = 0.0
+
     return features
 
 
@@ -153,6 +163,25 @@ def compute_latest(ohlcv_df: pd.DataFrame, symbol: str = "") -> pd.Series:
                 log.debug("MSTR on_chain_score=%.3f", oc.on_chain_score)
         except Exception as exc:
             log.warning("on-chain feature injection failed: %s", exc)
+
+    if symbol.upper() == "BTC":
+        try:
+            from core.cycle_engine import CycleEngine
+            engine = CycleEngine("BTC")
+            sig = engine.get_cycle_signal(ohlcv_df)
+            row = row.copy()
+            row["timing_probability"]   = sig.timing_probability
+            row["cycle_completion_pct"] = sig.cycle_completion_pct
+            row["failed_cycle"]         = float(sig.failed_cycle)
+            row["composite_score"]      = sig.composite_score
+            row["donchian_score"]       = sig.donchian_score
+            row["gaussian_score"]       = sig.gaussian_score
+            row["bollinger_score"]      = sig.bollinger_score
+            log.debug(
+                "BTC cycle: composite=%.3f bias=%s", sig.composite_score, sig.bias
+            )
+        except Exception as exc:
+            log.warning("BTC cycle feature injection failed: %s", exc)
 
     return row
 

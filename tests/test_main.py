@@ -528,22 +528,21 @@ class TestShutdown:
         trader.shutdown("test")
         assert not tmp_lockfile.exists()
 
-    def test_shutdown_cancels_orders_when_configured(
+    def test_shutdown_always_cancels_open_orders(
+        self, trader, patch_modules
+    ):
+        trader.shutdown("test")
+        patch_modules["oe"].cancel_all.assert_called_once()
+
+    def test_shutdown_cancels_orders_regardless_of_flag(
         self, mock_client, mock_hmm, mock_risk, tmp_lockfile, patch_modules
     ):
         t = RegimeTrader(
-            client                    = mock_client,
-            hmm                       = mock_hmm,
-            risk_manager              = mock_risk,
-            lockfile                  = tmp_lockfile,
-            close_positions_on_shutdown = True,
+            client       = mock_client,
+            hmm          = mock_hmm,
+            risk_manager = mock_risk,
+            lockfile     = tmp_lockfile,
         )
         tmp_lockfile.write_text("lock")
         t.shutdown("test")
         patch_modules["oe"].cancel_all.assert_called_once()
-
-    def test_shutdown_skips_cancel_by_default(
-        self, trader, patch_modules
-    ):
-        trader.shutdown("test")
-        patch_modules["oe"].cancel_all.assert_not_called()

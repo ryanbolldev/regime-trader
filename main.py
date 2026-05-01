@@ -202,6 +202,15 @@ class RegimeTrader:
         except Exception as exc:
             log.warning("Position tracker reconciliation skipped: %s", exc)
 
+        # Cancel any lingering open orders from a prior session
+        try:
+            cancelled = order_executor.cancel_all()
+            n_cancelled = sum(bool(c) for c in cancelled)
+            if n_cancelled:
+                log.info("Startup: cancelled %d lingering open order(s)", n_cancelled)
+        except Exception as exc:
+            log.warning("Startup: could not cancel open orders: %s", exc)
+
         alerts.send(
             "startup",
             f"Regime Trader started. NAV=${nav:,.2f}  "
@@ -400,12 +409,11 @@ class RegimeTrader:
         self._shutdown_reason = reason
         log.info("Shutting down: reason=%s", reason)
 
-        if self._close_on_shutdown:
-            try:
-                cancelled = order_executor.cancel_all()
-                log.info("Cancelled %d open order(s)", sum(bool(c) for c in cancelled))
-            except Exception as exc:
-                log.error("Failed to cancel orders on shutdown: %s", exc)
+        try:
+            cancelled = order_executor.cancel_all()
+            log.info("Cancelled %d open order(s) on shutdown", sum(bool(c) for c in cancelled))
+        except Exception as exc:
+            log.error("Failed to cancel orders on shutdown: %s", exc)
 
         try:
             if self._lockfile.exists():
