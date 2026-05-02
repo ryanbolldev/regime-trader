@@ -551,6 +551,112 @@ class TestMarketHoursGate:
 
 
 # ---------------------------------------------------------------------------
+# TestLiveAccountMode
+# ---------------------------------------------------------------------------
+
+class TestLiveAccountMode:
+
+    @pytest.fixture(autouse=True)
+    def enable_live_mode(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "LIVE_ACCOUNT_MODE", True)
+
+    def test_equity_skipped_in_live_mode(
+        self, trader, mock_client, patch_modules
+    ):
+        mock_client.is_market_open.return_value = True
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_equity_skip_logged_in_live_mode(
+        self, trader, mock_hmm, mock_client, caplog
+    ):
+        import logging
+        mock_client.is_market_open.return_value = True
+        mock_hmm.regime_name.return_value = "bull"
+        with caplog.at_level(logging.INFO, logger="main"):
+            trader._run_bar()
+        assert any("LIVE MODE" in r.message and "equity orders disabled" in r.message
+                   for r in caplog.records)
+
+    def test_live_approval_log_appears_for_btc(
+        self, trader, mock_client, caplog
+    ):
+        import logging
+        mock_client.is_market_open.return_value = True
+        with caplog.at_level(logging.INFO, logger="main"):
+            trader._run_bar()
+        assert any("LIVE ACCOUNT: approving order for" in r.message
+                   for r in caplog.records)
+
+    def test_btc_size_capped_at_20pct_nav(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        import core.btc_strategy as btc_mod
+        from core.btc_strategy import BTCAction
+        monkeypatch.setattr(s, "LIVE_MAX_POSITION_PCT", 0.20)
+
+        # Force BTCStrategy.get_action to return a BUY with size > 20% of NAV
+        oversized_action = BTCAction(
+            action="BUY", target_allocation_pct=0.5,
+            size_usd=50_000.0,   # 50% of $100k NAV — well above 20% cap
+            reason="test", regime=3, cycle_score=0.7, confidence=0.8,
+        )
+        monkeypatch.setattr(
+            btc_mod.BTCStrategy, "get_action",
+            lambda self, **kwargs: oversized_action,
+        )
+        mock_client.is_market_open.return_value = True
+        mock_client.get_positions.return_value = []
+
+        trader._run_bar()
+
+        calls = patch_modules["oe"].submit_crypto_order.call_args_list
+        if calls:
+            submitted_size = calls[0].args[2] if calls[0].args else calls[0].kwargs.get("notional_usd", 0)
+            assert submitted_size <= 100_000.0 * 0.20 + 1e-6
+
+    def test_btc_blocked_when_deployed_at_cap(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        import core.btc_strategy as btc_mod
+        from core.btc_strategy import BTCAction
+        monkeypatch.setattr(s, "LIVE_MAX_DEPLOYED_PCT", 0.30)
+
+        buy_action = BTCAction(
+            action="BUY", target_allocation_pct=0.5,
+            size_usd=5_000.0, reason="test", regime=3, cycle_score=0.7, confidence=0.8,
+        )
+        monkeypatch.setattr(
+            btc_mod.BTCStrategy, "get_action",
+            lambda self, **kwargs: buy_action,
+        )
+        # Positions already consuming 30% of NAV
+        pos = MagicMock()
+        pos.market_value = 30_000.0   # exactly 30% of $100k
+        pos.symbol = "OTHER"
+        mock_client.get_positions.return_value = [pos]
+        mock_client.is_market_open.return_value = True
+
+        trader._run_bar()
+        patch_modules["oe"].submit_crypto_order.assert_not_called()
+
+    def test_paper_mode_flag_false_allows_equity(
+        self, trader, mock_risk, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "LIVE_ACCOUNT_MODE", False)
+        mock_client.is_market_open.return_value = True
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_called()
+
+
+# ---------------------------------------------------------------------------
 # TestShutdown
 # ---------------------------------------------------------------------------
 

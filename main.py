@@ -337,6 +337,17 @@ class RegimeTrader:
             log.debug("Market closed - skipping equity ticker %s", ticker)
             return
 
+        # In live mode, only BTC trades
+        if settings.LIVE_ACCOUNT_MODE:
+            log.info(
+                "LIVE MODE: equity orders disabled — skipping %s "
+                "(regime=%s confidence=%.2f uncertain=%s)",
+                ticker, engine.regime_name(regime),
+                0.8 if engine.is_confirmed() and not engine.is_uncertain() else 0.5,
+                engine.is_uncertain(),
+            )
+            return
+
         # Build signal
         try:
             nav = float(position_tracker.get_nav())
@@ -458,9 +469,19 @@ class RegimeTrader:
         )
 
         if action.action == "HOLD":
-            log.debug(
-                "BTC: HOLD (target=%.1f%% within threshold)", target_alloc * 100
-            )
+            if settings.LIVE_ACCOUNT_MODE:
+                log.info(
+                    "LIVE MODE BTC: HOLD — target=%.1f%% within rebalance threshold  "
+                    "regime=%s  cycle=%.2f  uncertain=%s  confidence=%.2f",
+                    target_alloc * 100,
+                    _REGIME_NAMES.get(regime, str(regime)),
+                    float(cycle_signal.composite_score),
+                    is_uncertain, confidence,
+                )
+            else:
+                log.debug(
+                    "BTC: HOLD (target=%.1f%% within threshold)", target_alloc * 100
+                )
             return
 
         log.info(
@@ -473,14 +494,60 @@ class RegimeTrader:
         )
 
         btc_symbol = settings.BTC_TICKERS[0]  # "BTC/USD"
+        order_size = action.size_usd
+
+        if settings.LIVE_ACCOUNT_MODE:
+            log.info(
+                "LIVE MODE BTC: action=%s  size=$%.2f  target=%.1f%%  "
+                "regime=%s  cycle=%.2f  uncertain=%s  confidence=%.2f",
+                action.action, order_size, target_alloc * 100,
+                _REGIME_NAMES.get(regime, str(regime)),
+                float(cycle_signal.composite_score), is_uncertain, confidence,
+            )
+
+            # 30% total deployed cap — only blocks new BUY orders
+            if action.action == "BUY":
+                try:
+                    deployed = sum(
+                        p.market_value for p in self._client.get_positions()
+                    )
+                    max_deployed = nav * settings.LIVE_MAX_DEPLOYED_PCT
+                    if deployed >= max_deployed:
+                        log.info(
+                            "LIVE MODE: deployed $%.2f (%.1f%% NAV) at/above "
+                            "%.0f%% cap — skipping %s BUY",
+                            deployed, deployed / nav * 100,
+                            settings.LIVE_MAX_DEPLOYED_PCT * 100, btc_symbol,
+                        )
+                        return
+                except Exception as exc:
+                    log.warning(
+                        "LIVE MODE: could not check total deployment: %s", exc
+                    )
+
+            # 20% per-trade size cap
+            live_max = nav * settings.LIVE_MAX_POSITION_PCT
+            if order_size > live_max:
+                log.info(
+                    "LIVE MODE: capping %s size $%.2f → $%.2f (%.0f%% NAV cap)",
+                    btc_symbol, order_size, live_max,
+                    settings.LIVE_MAX_POSITION_PCT * 100,
+                )
+                order_size = live_max
+
+            log.info(
+                "LIVE ACCOUNT: approving order for %s size $%.2f",
+                btc_symbol, order_size,
+            )
+
         try:
             if action.action == "BUY":
                 result = order_executor.submit_crypto_order(
-                    btc_symbol, "buy", action.size_usd, self._client
+                    btc_symbol, "buy", order_size, self._client
                 )
             elif action.action in ("REDUCE", "EXIT", "SELL"):
                 result = order_executor.submit_crypto_order(
-                    btc_symbol, "sell", action.size_usd, self._client
+                    btc_symbol, "sell", order_size, self._client
                 )
             else:
                 result = None

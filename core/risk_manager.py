@@ -25,12 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config.settings import (
-    INTRADAY_STOP_HALT,
-    INTRADAY_STOP_WARN,
-    PEAK_DRAWDOWN_LOCKOUT,
-    WEEKLY_STOP,
-)
+from config import settings
 
 
 class InsufficientFundsError(Exception):
@@ -101,12 +96,18 @@ class RiskManager:
 
         Returns the names of any breakers newly fired this bar.
         """
+        live = settings.LIVE_ACCOUNT_MODE
+        _halt    = settings.LIVE_INTRADAY_STOP_HALT    if live else settings.INTRADAY_STOP_HALT
+        _warn    = settings.INTRADAY_STOP_WARN
+        _weekly  = settings.LIVE_WEEKLY_STOP           if live else settings.WEEKLY_STOP
+        _lockout = settings.LIVE_PEAK_DRAWDOWN_LOCKOUT if live else settings.PEAK_DRAWDOWN_LOCKOUT
+
         fired: list[str] = []
 
         # 1. Peak-drawdown lockout — check before updating HWM
         if not self._locked and self._high_water_mark > 0.0:
             peak_dd = (current_nav - self._high_water_mark) / self._high_water_mark
-            if peak_dd <= PEAK_DRAWDOWN_LOCKOUT:
+            if peak_dd <= _lockout:
                 self._locked = True
                 fired.append("peak_drawdown_lockout")
 
@@ -117,19 +118,19 @@ class RiskManager:
         # 2 & 3. Daily drawdown breakers
         if self._daily_open_nav > 0.0 and not self._locked:
             daily_dd = (current_nav - self._daily_open_nav) / self._daily_open_nav
-            if daily_dd <= INTRADAY_STOP_HALT and not self._daily_halt:
+            if daily_dd <= _halt and not self._daily_halt:
                 self._daily_halt  = True
                 self._daily_halve = True
                 fired.append("daily_halt")
                 fired.append("daily_halve_sizes")
-            elif daily_dd <= INTRADAY_STOP_WARN and not self._daily_halve:
+            elif daily_dd <= _warn and not self._daily_halve:
                 self._daily_halve = True
                 fired.append("daily_halve_sizes")
 
         # 4. Weekly drawdown resize
         if self._weekly_open_nav > 0.0 and not self._locked:
             weekly_dd = (current_nav - self._weekly_open_nav) / self._weekly_open_nav
-            if weekly_dd <= WEEKLY_STOP and not self._weekly_resize:
+            if weekly_dd <= _weekly and not self._weekly_resize:
                 self._weekly_resize = True
                 fired.append("weekly_resize")
 

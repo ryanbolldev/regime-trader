@@ -117,6 +117,17 @@ CYCLE_BOLLINGER_WEIGHT     = 0.25
 IS_EQUITY_HOURS_ONLY = True   # block equity orders when market is closed
 
 # ---------------------------------------------------------------------------
+# Live account mode
+# ---------------------------------------------------------------------------
+LIVE_ACCOUNT_MODE          = False   # Set True only for live deployment
+
+LIVE_MAX_POSITION_PCT      = 0.20    # 20% of NAV per-trade hard cap (live)
+LIVE_MAX_DEPLOYED_PCT      = 0.30    # 30% of NAV total deployment cap (live)
+LIVE_INTRADAY_STOP_HALT    = -0.02   # daily halt at -2%  (paper: -3%)
+LIVE_WEEKLY_STOP           = -0.03   # weekly resize at -3%  (paper: -5%)
+LIVE_PEAK_DRAWDOWN_LOCKOUT = -0.05   # lockout at -5%  (paper: -10%)
+
+# ---------------------------------------------------------------------------
 # BTC spot trading
 # ---------------------------------------------------------------------------
 BTC_TICKERS             = ["BTC/USD"]
