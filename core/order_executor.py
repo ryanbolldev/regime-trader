@@ -183,6 +183,44 @@ def _has_existing_order_or_position(symbol: str, client: AlpacaClient) -> bool:
     return False
 
 
+def submit_crypto_order(
+    symbol:       str,
+    side:         str,
+    notional_usd: float,
+    client: Optional[AlpacaClient] = None,
+) -> Optional[OrderResult]:
+    """Submit a notional crypto order.  Returns None if notional <= 0 or a
+    duplicate open order already exists for the symbol.
+    """
+    if notional_usd <= 0:
+        log.debug(
+            "Crypto order skipped: notional $%.2f <= 0 for %s", notional_usd, symbol
+        )
+        return None
+
+    c = client if client is not None else _get_client()
+
+    # Dedup: skip if an open order already exists for this symbol.
+    try:
+        orders = c.get_orders()
+        if any(o.symbol.upper() == symbol.upper() for o in orders):
+            log.warning(
+                "Skipping %s %s: existing open order found", symbol, side
+            )
+            return None
+    except Exception as exc:
+        log.warning("Could not check existing orders for %s: %s", symbol, exc)
+
+    log.info(
+        "Crypto order: symbol=%s side=%s notional=$%.2f", symbol, side, notional_usd
+    )
+    return c.submit_order_notional(
+        symbol=symbol,
+        notional_usd=notional_usd,
+        side=side,
+    )
+
+
 def cancel(order_id: str, client: Optional[AlpacaClient] = None) -> bool:
     """Cancel a single order by ID. Returns True if cancelled, False if not found."""
     c = client if client is not None else _get_client()

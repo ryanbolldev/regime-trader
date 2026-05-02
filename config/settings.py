@@ -24,7 +24,7 @@ Never place API keys or secrets in this file.
 # Universe
 # ---------------------------------------------------------------------------
 TICKERS           = ["SPY", "MSTR", "CVX", "BTC"]
-REFERENCE_TICKERS = ["SPY", "BTC"]   # run HMM for regime context but never trade
+REFERENCE_TICKERS = ["SPY"]   # run HMM for regime context but never trade
 
 # ---------------------------------------------------------------------------
 # HMM model selection
@@ -110,6 +110,14 @@ CYCLE_QUALITY_LOOKBACK     = 3
 CYCLE_DONCHIAN_WEIGHT      = 0.40
 CYCLE_GAUSSIAN_WEIGHT      = 0.35
 CYCLE_BOLLINGER_WEIGHT     = 0.25
+
+# ---------------------------------------------------------------------------
+# BTC spot trading
+# ---------------------------------------------------------------------------
+BTC_TICKERS             = ["BTC/USD"]
+BTC_MAX_ALLOCATION      = 0.75
+BTC_REBALANCE_THRESHOLD = 0.05
+BTC_CYCLE_TIER_BOOST    = True
 
 # ---------------------------------------------------------------------------
 # Wheel strategy

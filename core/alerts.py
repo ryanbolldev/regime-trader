@@ -50,6 +50,7 @@ _overrides: dict[str, int]   = {}
 _CANONICAL: dict[str, str] = {
     "regime_change":    "REGIME_CHANGE",
     "trade_placed":     "TRADE_PLACED",
+    "btc_trade":        "BTC_TRADE",
     "circuit_breaker":  "CIRCUIT_BREAKER",
     "daily_pnl":        "DAILY_PNL",
     "lockfile_written": "LOCKFILE",
@@ -189,6 +190,37 @@ def send(
         pass
     except Exception as exc:
         log.warning("Email error: %s", exc)
+
+
+def send_btc_trade_alert(
+    action: object,
+    *,
+    regime_name: str = "",
+    cycle_score: float = 0.0,
+) -> None:
+    """Fire a BTC_TRADE alert for BUY / SELL / REDUCE / EXIT actions.
+
+    ``action`` must be a BTCAction dataclass instance.  Using 'object' to
+    avoid a circular import; duck-typing is safe here.
+    """
+    try:
+        act         = str(getattr(action, "action", ""))
+        size_usd    = float(getattr(action, "size_usd", 0.0))
+        target_alloc = float(getattr(action, "target_allocation_pct", 0.0))
+        reason      = str(getattr(action, "reason", ""))
+
+        msg = (
+            f"BTC TRADE\n"
+            f"Action: {act}\n"
+            f"Size: ${size_usd:,.2f}\n"
+            f"Target Allocation: {target_alloc:.1%}\n"
+            f"Regime: {regime_name}\n"
+            f"Cycle Score: {cycle_score * 100:.1f}%\n"
+            f"Reason: {reason}"
+        )
+        send("btc_trade", msg, "info", symbol="BTC")
+    except Exception as exc:
+        log.warning("BTC trade alert error: %s", exc)
 
 
 def send_cycle_alert(signal: object, prev_score: float = 0.0) -> None:

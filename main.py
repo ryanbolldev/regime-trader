@@ -324,6 +324,14 @@ class RegimeTrader:
             log.debug("%s: reference ticker — regime context only, no trade", ticker)
             return
 
+        # BTC uses its own cycle-aware strategy pipeline
+        if ticker.upper() == "BTC":
+            try:
+                self._process_btc(ticker, ohlcv, regime, engine)
+            except Exception as exc:
+                log.warning("BTC pipeline error for %s: %s", ticker, exc)
+            return
+
         # Build signal
         try:
             nav = float(position_tracker.get_nav())
@@ -368,6 +376,119 @@ class RegimeTrader:
             position_tracker.on_fill(order_result)
         except Exception as exc:
             log.error("Order execution failed for %s: %s", ticker, exc)
+
+    def _process_btc(
+        self,
+        ticker: str,
+        ohlcv: pd.DataFrame,
+        regime: int,
+        engine,
+    ) -> None:
+        """Run the BTC-specific cycle-aware strategy pipeline."""
+        from core.btc_strategy import BTCPosition, BTCStrategy
+        from core.cycle_engine import CycleEngine
+
+        try:
+            current_price = float(ohlcv["close"].iloc[-1])
+        except Exception as exc:
+            log.warning("BTC: could not read current price: %s", exc)
+            return
+
+        try:
+            cycle_eng    = CycleEngine(ticker)
+            cycle_signal = cycle_eng.get_cycle_signal(ohlcv)
+        except Exception as exc:
+            log.warning("BTC cycle signal failed: %s — skipping BTC bar", exc)
+            return
+
+        try:
+            nav = float(position_tracker.get_nav())
+        except Exception:
+            nav = float(self._client.get_account().portfolio_value)
+
+        try:
+            buying_power = float(self._client.get_account().buying_power)
+        except Exception:
+            buying_power = nav
+
+        # Resolve current BTC position from broker
+        current_position: Optional[BTCPosition] = None
+        try:
+            for pos in self._client.get_positions():
+                if pos.symbol.upper() in ("BTC/USD", "BTC"):
+                    cost = float(pos.avg_entry_price)
+                    current_position = BTCPosition(
+                        symbol=pos.symbol,
+                        shares_held=float(pos.qty),
+                        avg_cost=cost,
+                        current_price=current_price,
+                        unrealized_pnl=float(pos.unrealized_pl),
+                        unrealized_pnl_pct=(
+                            (current_price - cost) / cost if cost > 0 else 0.0
+                        ),
+                        entry_regime=regime,
+                        entry_cycle_score=float(cycle_signal.composite_score),
+                    )
+                    break
+        except Exception as exc:
+            log.warning("BTC: could not fetch broker position: %s", exc)
+
+        is_uncertain = engine.is_uncertain()
+        confidence   = (
+            0.8 if engine.is_confirmed() and not is_uncertain else 0.5
+        )
+
+        strategy     = BTCStrategy()
+        target_alloc = strategy.get_target_allocation(regime, cycle_signal, is_uncertain)
+
+        action = strategy.get_action(
+            current_position  = current_position,
+            target_allocation = target_alloc,
+            portfolio_nav     = nav,
+            buying_power      = buying_power,
+            current_price     = current_price,
+            regime            = regime,
+            cycle_score       = float(cycle_signal.composite_score),
+            confidence        = confidence,
+        )
+
+        if action.action == "HOLD":
+            log.debug(
+                "BTC: HOLD (target=%.1f%% within threshold)", target_alloc * 100
+            )
+            return
+
+        log.info(
+            "BTC action: %s  size=$%.2f  target=%.1f%%  regime=%s  cycle=%.2f",
+            action.action,
+            action.size_usd,
+            target_alloc * 100,
+            _REGIME_NAMES.get(regime, str(regime)),
+            float(cycle_signal.composite_score),
+        )
+
+        btc_symbol = settings.BTC_TICKERS[0]  # "BTC/USD"
+        try:
+            if action.action == "BUY":
+                result = order_executor.submit_crypto_order(
+                    btc_symbol, "buy", action.size_usd, self._client
+                )
+            elif action.action in ("REDUCE", "EXIT", "SELL"):
+                result = order_executor.submit_crypto_order(
+                    btc_symbol, "sell", action.size_usd, self._client
+                )
+            else:
+                result = None
+
+            if result is not None:
+                alerts.send_btc_trade_alert(
+                    action,
+                    regime_name=_REGIME_NAMES.get(regime, str(regime)),
+                    cycle_score=float(cycle_signal.composite_score),
+                )
+                position_tracker.on_fill(result)
+        except Exception as exc:
+            log.error("BTC order execution failed: %s", exc)
 
     def _fetch_bars_with_retry(self, ticker: str) -> Optional[pd.DataFrame]:
         """Return latest OHLCV bars, retrying up to DATA_MAX_RETRIES times."""

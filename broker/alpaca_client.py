@@ -405,6 +405,63 @@ class AlpacaClient:
         return contracts
 
     @_with_retry
+    def submit_order_notional(
+        self,
+        symbol:       str,
+        notional_usd: float,
+        side:         str,
+    ) -> OrderResult:
+        """Submit a notional (dollar-amount) market order for fractional crypto.
+
+        Uses ``notional`` instead of ``qty`` and ``gtc`` time-in-force, which
+        are required for Alpaca crypto orders.
+        """
+        request_id = str(uuid.uuid4())
+
+        body: dict = {
+            "symbol":        symbol,
+            "notional":      str(notional_usd),
+            "side":          side.lower(),
+            "type":          "market",
+            "time_in_force": "gtc",
+        }
+
+        url = f"{self._base_url}/orders"
+        try:
+            resp = self._session.post(
+                url,
+                json=body,
+                headers={"X-Request-Id": request_id},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise BrokerUnavailableError(str(exc)) from exc
+
+        if not resp.ok:
+            _handle_http_error(resp)
+
+        data = resp.json()
+        logger.info(
+            "Notional order submitted: symbol=%s notional=%s side=%s request_id=%s",
+            symbol, notional_usd, side, request_id,
+        )
+        return OrderResult(
+            order_id         = str(data.get("id", "")),
+            client_order_id  = str(data.get("client_order_id", "")),
+            symbol           = str(data.get("symbol", symbol)),
+            qty              = float(data.get("qty") or 0),
+            side             = str(data.get("side", side)),
+            order_type       = str(data.get("type", "market")),
+            status           = str(data.get("status", "")),
+            filled_qty       = float(data.get("filled_qty") or 0),
+            filled_avg_price = (
+                float(data["filled_avg_price"])
+                if data.get("filled_avg_price") else None
+            ),
+            request_id       = request_id,
+        )
+
+    @_with_retry
     def is_market_open(self) -> bool:
         try:
             clock = self._trading.get_clock()
