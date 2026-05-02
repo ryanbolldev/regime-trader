@@ -122,7 +122,7 @@ class RegimeTrader:
 
         self._running:          bool = False
         self._shutdown_reason:  str  = ""
-        self._current_regime:   int  = -1
+        self._current_regime:   dict[str, int] = {}  # per-ticker last confirmed regime
         self._market_was_open:  bool = False
 
     # ------------------------------------------------------------------
@@ -300,18 +300,18 @@ class RegimeTrader:
             )
             return
 
-        # Regime change notification
-        if regime != -1 and regime != self._current_regime:
-            prev = self._current_regime
-            self._current_regime = regime
+        # Regime change notification (per-ticker — never share state across tickers)
+        prev_regime = self._current_regime.get(ticker, -1)
+        if regime != -1 and regime != prev_regime:
+            self._current_regime[ticker] = regime
             regime_name = engine.regime_name(regime)
             log.info(
                 "HMM [%s] regime change: %s → %s",
-                ticker, _REGIME_NAMES.get(prev, str(prev)), regime_name,
+                ticker, _REGIME_NAMES.get(prev_regime, str(prev_regime)), regime_name,
             )
             alerts.send(
                 "regime_change",
-                f"Regime change detected: {_REGIME_NAMES.get(prev, prev)} "
+                f"[{ticker}] Regime change: {_REGIME_NAMES.get(prev_regime, prev_regime)} "
                 f"→ {regime_name}",
                 "info",
             )

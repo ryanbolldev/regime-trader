@@ -417,7 +417,8 @@ class AlpacaClient:
         Uses ``notional`` instead of ``qty`` and ``gtc`` time-in-force, which
         are required for Alpaca crypto orders.
         """
-        request_id = str(uuid.uuid4())
+        notional_usd = round(notional_usd, 2)
+        request_id   = str(uuid.uuid4())
 
         body: dict = {
             "symbol":        symbol,

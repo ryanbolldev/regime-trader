@@ -250,7 +250,8 @@ class TestBarProcessing:
     def test_regime_change_fires_alert(
         self, trader, mock_hmm, patch_modules
     ):
-        trader._current_regime = 2       # was neutral
+        from config.settings import TICKERS
+        trader._current_regime = {t: 2 for t in TICKERS}   # all tickers were neutral
         mock_hmm.predict_current.return_value = 3    # now bull
         mock_hmm.regime_name.return_value = "bull"
         trader._run_bar()
@@ -260,7 +261,8 @@ class TestBarProcessing:
     def test_no_alert_when_regime_unchanged(
         self, trader, mock_hmm, patch_modules
     ):
-        trader._current_regime = 3
+        from config.settings import TICKERS
+        trader._current_regime = {t: 3 for t in TICKERS}   # all tickers already bull
         mock_hmm.predict_current.return_value = 3
         trader._run_bar()
         event_names = [c.args[0] for c in patch_modules["al"].send.call_args_list]
@@ -269,7 +271,8 @@ class TestBarProcessing:
     def test_approved_signal_calls_order_executor(
         self, trader, mock_hmm, mock_risk, patch_modules
     ):
-        trader._current_regime = 3
+        from config.settings import TICKERS
+        trader._current_regime = {t: 3 for t in TICKERS}
         mock_hmm.predict_current.return_value = 3
         mock_risk.approve.return_value = MagicMock(
             approved=True, size_multiplier=1.0, reason="approved"
@@ -280,7 +283,8 @@ class TestBarProcessing:
     def test_blocked_signal_skips_order_executor(
         self, trader, mock_hmm, mock_risk, patch_modules
     ):
-        trader._current_regime = 3
+        from config.settings import TICKERS
+        trader._current_regime = {t: 3 for t in TICKERS}
         mock_hmm.predict_current.return_value = 3
         mock_risk.approve.return_value = MagicMock(
             approved=False, size_multiplier=0.0, reason="daily_halt_active"
@@ -324,7 +328,7 @@ class TestBarProcessing:
     ):
         from config.settings import TICKERS, REFERENCE_TICKERS
         tradeable = next(t for t in TICKERS if t not in REFERENCE_TICKERS)
-        trader._current_regime = 2
+        trader._current_regime = {t: 2 for t in TICKERS}
         mock_hmm.predict_current.return_value = 3
         mock_hmm.regime_name.return_value = "bull"
         trader._run_bar()
@@ -335,7 +339,8 @@ class TestBarProcessing:
     def test_position_tracker_on_fill_called_after_order(
         self, trader, mock_hmm, mock_risk, patch_modules
     ):
-        trader._current_regime = 3
+        from config.settings import TICKERS
+        trader._current_regime = {t: 3 for t in TICKERS}
         mock_hmm.predict_current.return_value = 3
         mock_risk.approve.return_value = MagicMock(
             approved=True, size_multiplier=1.0, reason="approved"
