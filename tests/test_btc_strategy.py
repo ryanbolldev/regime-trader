@@ -57,17 +57,17 @@ class TestBTCStrategyAllocations:
     def test_crash_allocation_is_zero(self):
         assert BTCStrategy.REGIME_ALLOCATIONS[0] == 0.0
 
-    def test_bear_allocation_is_0_25(self):
-        assert BTCStrategy.REGIME_ALLOCATIONS[1] == pytest.approx(0.25)
+    def test_bear_allocation_is_0_05(self):
+        assert BTCStrategy.REGIME_ALLOCATIONS[1] == pytest.approx(0.05)
 
-    def test_neutral_allocation_is_0_50(self):
-        assert BTCStrategy.REGIME_ALLOCATIONS[2] == pytest.approx(0.50)
+    def test_neutral_allocation_is_0_10(self):
+        assert BTCStrategy.REGIME_ALLOCATIONS[2] == pytest.approx(0.10)
 
-    def test_bull_allocation_is_0_75(self):
-        assert BTCStrategy.REGIME_ALLOCATIONS[3] == pytest.approx(0.75)
+    def test_bull_allocation_is_0_15(self):
+        assert BTCStrategy.REGIME_ALLOCATIONS[3] == pytest.approx(0.15)
 
-    def test_euphoria_allocation_is_0_40(self):
-        assert BTCStrategy.REGIME_ALLOCATIONS[4] == pytest.approx(0.40)
+    def test_euphoria_allocation_is_0_08(self):
+        assert BTCStrategy.REGIME_ALLOCATIONS[4] == pytest.approx(0.08)
 
     def test_euphoria_less_than_bull(self):
         assert BTCStrategy.REGIME_ALLOCATIONS[4] < BTCStrategy.REGIME_ALLOCATIONS[3]
@@ -90,47 +90,47 @@ class TestGetTargetAllocation:
 
     def test_bear_base_no_boost(self):
         result = STRATEGY.get_target_allocation(1, _cycle(composite_score=0.0), False)
-        assert result == pytest.approx(0.25)
+        assert result == pytest.approx(0.05)
 
     def test_neutral_base_no_boost(self):
         result = STRATEGY.get_target_allocation(2, _cycle(composite_score=0.0), False)
-        assert result == pytest.approx(0.50)
+        assert result == pytest.approx(0.10)
 
     def test_bull_base_no_boost(self):
         result = STRATEGY.get_target_allocation(3, _cycle(composite_score=0.0), False)
-        assert result == pytest.approx(0.75)
+        assert result == pytest.approx(0.15)
 
     def test_euphoria_base_no_boost(self):
         result = STRATEGY.get_target_allocation(4, _cycle(composite_score=0.0), False)
-        assert result == pytest.approx(0.40)
+        assert result == pytest.approx(0.08)
 
     # -- cycle boost (one tier up) --
 
     def test_cycle_boost_bear_to_neutral_allocation(self):
         result = STRATEGY.get_target_allocation(1, _cycle(composite_score=0.8), False)
-        assert result == pytest.approx(0.50)   # REGIME_ALLOCATIONS[2]
+        assert result == pytest.approx(0.10)   # REGIME_ALLOCATIONS[2]
 
     def test_cycle_boost_neutral_to_bull_allocation(self):
         result = STRATEGY.get_target_allocation(2, _cycle(composite_score=0.8), False)
-        assert result == pytest.approx(0.75)   # REGIME_ALLOCATIONS[3]
+        assert result == pytest.approx(0.15)   # REGIME_ALLOCATIONS[3]
 
     def test_cycle_boost_bull_to_euphoria_allocation(self):
         result = STRATEGY.get_target_allocation(3, _cycle(composite_score=0.8), False)
-        assert result == pytest.approx(0.40)   # REGIME_ALLOCATIONS[4]
+        assert result == pytest.approx(0.08)   # REGIME_ALLOCATIONS[4]
 
     def test_cycle_boost_euphoria_stays_at_euphoria(self):
         result = STRATEGY.get_target_allocation(4, _cycle(composite_score=0.8), False)
-        assert result == pytest.approx(0.40)   # already at max tier
+        assert result == pytest.approx(0.08)   # already at max tier
 
     # -- cycle reduce (one tier down) --
 
     def test_failed_cycle_neutral_reduces_to_bear(self):
         result = STRATEGY.get_target_allocation(2, _cycle(failed_cycle=True), False)
-        assert result == pytest.approx(0.25)   # REGIME_ALLOCATIONS[1]
+        assert result == pytest.approx(0.05)   # REGIME_ALLOCATIONS[1]
 
     def test_failed_cycle_bull_reduces_to_neutral(self):
         result = STRATEGY.get_target_allocation(3, _cycle(failed_cycle=True), False)
-        assert result == pytest.approx(0.50)   # REGIME_ALLOCATIONS[2]
+        assert result == pytest.approx(0.10)   # REGIME_ALLOCATIONS[2]
 
     def test_failed_cycle_bear_reduces_to_crash(self):
         result = STRATEGY.get_target_allocation(1, _cycle(failed_cycle=True), False)
@@ -138,23 +138,23 @@ class TestGetTargetAllocation:
 
     def test_failed_cycle_euphoria_reduces_to_bull(self):
         result = STRATEGY.get_target_allocation(4, _cycle(failed_cycle=True), False)
-        assert result == pytest.approx(0.75)   # REGIME_ALLOCATIONS[3]
+        assert result == pytest.approx(0.15)   # REGIME_ALLOCATIONS[3]
 
     # -- uncertainty --
 
     def test_uncertainty_halves_neutral_allocation(self):
         result = STRATEGY.get_target_allocation(2, _cycle(), True)
-        assert result == pytest.approx(0.25)   # 0.50 * 0.50
+        assert result == pytest.approx(0.05)   # 0.10 * 0.50
 
     def test_uncertainty_with_boost_halves_boosted(self):
-        # neutral + boost → bull (0.75), uncertainty → 0.75 * 0.50 = 0.375
+        # neutral + boost → bull (0.15), uncertainty → 0.15 * 0.50 = 0.075
         result = STRATEGY.get_target_allocation(2, _cycle(composite_score=0.8), True)
-        assert result == pytest.approx(0.375)
+        assert result == pytest.approx(0.075)
 
     def test_uncertainty_with_failed_cycle(self):
-        # bull + failed → neutral (0.50), uncertainty → 0.50 * 0.50 = 0.25
+        # bull + failed → neutral (0.10), uncertainty → 0.10 * 0.50 = 0.05
         result = STRATEGY.get_target_allocation(3, _cycle(failed_cycle=True), True)
-        assert result == pytest.approx(0.25)
+        assert result == pytest.approx(0.05)
 
     # -- BTC_MAX_ALLOCATION cap --
 
@@ -175,20 +175,20 @@ class TestGetTargetAllocation:
         sig = _cycle(composite_score=0.9)
         with patch("core.btc_strategy.BTC_CYCLE_TIER_BOOST", False):
             result = BTCStrategy().get_target_allocation(2, sig, False)
-        assert result == pytest.approx(0.50)   # unchanged base
+        assert result == pytest.approx(0.10)   # unchanged base
 
     def test_no_reduce_when_tier_boost_disabled(self):
         sig = _cycle(failed_cycle=True)
         with patch("core.btc_strategy.BTC_CYCLE_TIER_BOOST", False):
             result = BTCStrategy().get_target_allocation(3, sig, False)
-        assert result == pytest.approx(0.75)   # unchanged base
+        assert result == pytest.approx(0.15)   # unchanged base
 
     # -- failed_cycle takes precedence over high score --
 
     def test_failed_cycle_takes_precedence_over_high_composite(self):
         sig = _cycle(composite_score=0.9, failed_cycle=True)
         result = STRATEGY.get_target_allocation(3, sig, False)
-        assert result == pytest.approx(0.50)   # bull reduced to neutral, not boosted
+        assert result == pytest.approx(0.10)   # bull reduced to neutral, not boosted
 
 
 # ---------------------------------------------------------------------------

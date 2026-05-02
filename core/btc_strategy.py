@@ -95,10 +95,10 @@ class BTCStrategy:
 
     REGIME_ALLOCATIONS: dict[int, float] = {
         0: 0.00,   # crash    — sit out
-        1: 0.25,   # bear     — light exposure
-        2: 0.50,   # neutral  — moderate exposure
-        3: 0.75,   # bull     — full exposure
-        4: 0.40,   # euphoria — trim (mean-reversion risk)
+        1: 0.05,   # bear     — light exposure
+        2: 0.10,   # neutral  — moderate exposure
+        3: 0.15,   # bull     — full exposure
+        4: 0.08,   # euphoria — trim (mean-reversion risk)
     }
 
     def get_target_allocation(

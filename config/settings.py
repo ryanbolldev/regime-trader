@@ -131,7 +131,7 @@ LIVE_PEAK_DRAWDOWN_LOCKOUT = -0.05   # lockout at -5%  (paper: -10%)
 # BTC spot trading
 # ---------------------------------------------------------------------------
 BTC_TICKERS             = ["BTCUSD"]
-BTC_MAX_ALLOCATION      = 0.75
+BTC_MAX_ALLOCATION      = 0.15
 BTC_REBALANCE_THRESHOLD = 0.05
 BTC_CYCLE_TIER_BOOST    = True
 
