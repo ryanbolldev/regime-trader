@@ -498,6 +498,59 @@ class TestRunLoop:
 
 
 # ---------------------------------------------------------------------------
+# TestMarketHoursGate
+# ---------------------------------------------------------------------------
+
+class TestMarketHoursGate:
+
+    def test_equity_order_skipped_when_market_closed(
+        self, trader, mock_client, patch_modules
+    ):
+        mock_client.is_market_open.return_value = False
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_equity_order_placed_when_market_open(
+        self, trader, mock_risk, mock_client, patch_modules
+    ):
+        mock_client.is_market_open.return_value = True
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_called()
+
+    def test_btc_order_skips_equity_gate_when_market_closed(
+        self, trader, mock_client, patch_modules
+    ):
+        """submit (equity) must not be called regardless of BTC path activity."""
+        mock_client.is_market_open.return_value = False
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_flag_false_allows_equity_when_market_closed(
+        self, trader, mock_risk, mock_client, patch_modules, monkeypatch
+    ):
+        """When IS_EQUITY_HOURS_ONLY=False the gate is bypassed."""
+        import config.settings as s
+        monkeypatch.setattr(s, "IS_EQUITY_HOURS_ONLY", False)
+        mock_client.is_market_open.return_value = False
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_called()
+
+    def test_hmm_regime_detection_still_runs_when_closed(
+        self, trader, mock_hmm, mock_client
+    ):
+        """HMM predict_current must be called even when the market is closed."""
+        mock_client.is_market_open.return_value = False
+        trader._run_bar()
+        mock_hmm.predict_current.assert_called()
+
+
+# ---------------------------------------------------------------------------
 # TestShutdown
 # ---------------------------------------------------------------------------
 

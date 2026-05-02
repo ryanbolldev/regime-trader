@@ -173,6 +173,10 @@ def get_signal(
     per_position_usd = equity_budget / n_positions
     risk_cap_usd = portfolio_nav * PER_TRADE_RISK_CAP
     position_size_usd = max(min(per_position_usd, risk_cap_usd), 0.0)
+    assert position_size_usd <= risk_cap_usd + 1e-9, (
+        f"position_size_usd ${position_size_usd:.2f} > "
+        f"risk_cap ${risk_cap_usd:.2f} for regime={regime} nav=${portfolio_nav:.2f}"
+    )
 
     # Rebalance decision
     drift = abs(current_allocation - effective_alloc)

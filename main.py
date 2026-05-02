@@ -332,6 +332,11 @@ class RegimeTrader:
                 log.warning("BTC pipeline error for %s: %s", ticker, exc)
             return
 
+        # Equity-only: gate order execution to market hours
+        if settings.IS_EQUITY_HOURS_ONLY and not self._client.is_market_open():
+            log.debug("Market closed - skipping equity ticker %s", ticker)
+            return
+
         # Build signal
         try:
             nav = float(position_tracker.get_nav())

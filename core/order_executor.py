@@ -121,12 +121,14 @@ def _submit_equity_order(
         log.warning("Could not fetch NAV for buying-power check: %s — skipping", exc)
         return None
 
-    if signal.position_size_usd > nav:
-        log.warning(
-            "Order skipped: size $%.2f exceeds NAV $%.2f for %s regime=%s",
-            signal.position_size_usd, nav, symbol, signal.regime_name,
-        )
-        return None
+    from config.settings import PER_TRADE_RISK_CAP
+    risk_cap = nav * PER_TRADE_RISK_CAP
+    assert signal.position_size_usd <= risk_cap + 0.01, (
+        f"position_size_usd ${signal.position_size_usd:.2f} exceeds "
+        f"NAV×{PER_TRADE_RISK_CAP:.0%} cap ${risk_cap:.2f} for {symbol} "
+        f"regime={signal.regime_name}"
+    )
+    position_size_usd = min(signal.position_size_usd, risk_cap)
 
     # Guard: skip if an open order or position already exists for this symbol.
     if _has_existing_order_or_position(symbol, client):
@@ -144,17 +146,17 @@ def _submit_equity_order(
         log.warning("Could not fetch price for %s: %s — skipping", symbol, exc)
         return None
 
-    shares = int(signal.position_size_usd / current_price)
+    shares = int(position_size_usd / current_price)
     if shares < 1:
         log.debug(
             "Size $%.2f < 1 share at $%.2f for %s — skipping",
-            signal.position_size_usd, current_price, symbol,
+            position_size_usd, current_price, symbol,
         )
         return None
 
     log.info(
         "Equity order: symbol=%s side=buy shares=%d ($%.2f @ $%.2f) regime=%s",
-        symbol, shares, signal.position_size_usd, current_price, signal.regime_name,
+        symbol, shares, position_size_usd, current_price, signal.regime_name,
     )
     return client.submit_order(
         symbol=symbol,
