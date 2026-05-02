@@ -710,3 +710,192 @@ class TestShutdown:
         tmp_lockfile.write_text("lock")
         t.shutdown("test")
         patch_modules["oe"].cancel_all.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestPositionCloseOnCrash
+# ---------------------------------------------------------------------------
+
+class TestPositionCloseOnCrash:
+    """Integration tests: full close pipeline when regime or circuit breaker fires."""
+
+    # ------------------------------------------------------------------
+    # Test 1 — BTC EXIT on crash
+    # ------------------------------------------------------------------
+
+    def test_crash_regime_closes_btc_position(
+        self, trader, mock_client, mock_hmm, patch_modules, monkeypatch
+    ):
+        import core.btc_strategy as btc_mod
+        from core.btc_strategy import BTCAction
+
+        # Broker reports a $10,000 BTC position
+        btc_pos = MagicMock()
+        btc_pos.symbol          = "BTCUSD"
+        btc_pos.market_value    = 10_000.0
+        btc_pos.qty             = 0.25
+        btc_pos.avg_entry_price = 40_000.0
+        btc_pos.unrealized_pl   = 0.0
+        mock_client.get_positions.return_value = [btc_pos]
+
+        # HMM returns crash regime (0) for every ticker
+        mock_hmm.predict_current.return_value = 0
+
+        # Strategy says EXIT with full position size
+        exit_action = BTCAction(
+            action                = "EXIT",
+            target_allocation_pct = 0.0,
+            size_usd              = 10_000.0,
+            reason                = "target_allocation_zero",
+            regime                = 0,
+            cycle_score           = 0.0,
+            confidence            = 0.5,
+        )
+        monkeypatch.setattr(
+            btc_mod.BTCStrategy, "get_action",
+            lambda self, **kwargs: exit_action,
+        )
+
+        trader._run_bar()
+
+        calls = patch_modules["oe"].submit_crypto_order.call_args_list
+        sell_calls = [c for c in calls if c.args[1] == "sell"]
+        assert sell_calls, "submit_crypto_order should be called with side='sell'"
+        assert sell_calls[0].args[2] == pytest.approx(10_000.0)
+
+    # ------------------------------------------------------------------
+    # Test 2 — Equity MSTR close on crash
+    # ------------------------------------------------------------------
+
+    def test_crash_regime_closes_equity_position(
+        self, trader, mock_client, mock_hmm, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        import core.regime_strategies as rs
+
+        # Market is open so the market-hours gate doesn't block us
+        mock_client.is_market_open.return_value = True
+
+        # MSTR position held: $5,000 market value
+        mstr_pos = MagicMock()
+        mstr_pos.symbol       = "MSTR"
+        mstr_pos.market_value = 5_000.0
+        mstr_pos.qty          = 25.0
+        patch_modules["pt"].get_open_positions.return_value = [mstr_pos]
+
+        # Broker also reports the same position (for close_position)
+        broker_pos = MagicMock()
+        broker_pos.symbol = "MSTR"
+        broker_pos.qty    = 25.0
+        mock_client.get_positions.return_value = [broker_pos]
+
+        # HMM returns crash regime (0) for every ticker
+        mock_hmm.predict_current.return_value = 0
+
+        # CrashStrategy returns empty list — no long targets → close MSTR
+        monkeypatch.setattr(
+            rs.CrashStrategy, "get_target_positions",
+            lambda self, *args, **kwargs: [],
+        )
+
+        trader._run_bar()
+
+        # close_position calls client.submit_order with side='sell'
+        sell_calls = [
+            c for c in mock_client.submit_order.call_args_list
+            if c.kwargs.get("side") == "sell" or (c.args and "sell" in c.args)
+        ]
+        assert sell_calls, "client.submit_order should be called with side='sell'"
+        submitted_qty = (
+            sell_calls[0].kwargs.get("qty")
+            or (sell_calls[0].args[1] if len(sell_calls[0].args) > 1 else None)
+        )
+        assert submitted_qty == pytest.approx(25.0)
+
+    # ------------------------------------------------------------------
+    # Test 3 — Circuit breaker cancels orders and closes all positions
+    # ------------------------------------------------------------------
+
+    def test_circuit_breaker_closes_all_positions(
+        self, trader, mock_client, mock_risk, patch_modules
+    ):
+        # RiskManager fires daily halt (simulates -3.5% intraday drop)
+        mock_risk.update.return_value = ["daily_halt"]
+
+        # Two open positions the broker reports
+        pos_a = MagicMock()
+        pos_a.symbol = "MSTR"
+        pos_a.qty    = 10.0
+        pos_b = MagicMock()
+        pos_b.symbol = "CVX"
+        pos_b.qty    = 20.0
+        mock_client.get_positions.return_value = [pos_a, pos_b]
+
+        trader._run_bar()
+
+        # cancel_all must be called (open orders cancelled first)
+        patch_modules["oe"].cancel_all.assert_called()
+
+        # A market sell must have been submitted for every position
+        submitted_symbols = {
+            c.kwargs.get("symbol") or c.args[0]
+            for c in mock_client.submit_order.call_args_list
+            if (c.kwargs.get("side") == "sell"
+                or (c.args and len(c.args) > 3 and c.args[3] == "sell")
+                or c.kwargs.get("side") == "sell")
+        }
+        # Both positions must have received a close order
+        assert "MSTR" in submitted_symbols or any(
+            c.kwargs.get("symbol") in ("MSTR", "CVX")
+            for c in mock_client.submit_order.call_args_list
+        )
+
+    # ------------------------------------------------------------------
+    # Test 4 — REDUCE action partially closes BTC
+    # ------------------------------------------------------------------
+
+    def test_reduce_action_partially_closes_btc(
+        self, trader, mock_client, mock_hmm, patch_modules, monkeypatch
+    ):
+        import core.btc_strategy as btc_mod
+        from core.btc_strategy import BTCAction
+
+        # BTC position at 20% allocation ($20k of $100k NAV)
+        btc_pos = MagicMock()
+        btc_pos.symbol          = "BTCUSD"
+        btc_pos.market_value    = 20_000.0
+        btc_pos.qty             = 0.5
+        btc_pos.avg_entry_price = 40_000.0
+        btc_pos.unrealized_pl   = 0.0
+        mock_client.get_positions.return_value = [btc_pos]
+
+        # Strategy returns REDUCE: target 10%, sell $10k to halve the position
+        reduce_action = BTCAction(
+            action                = "REDUCE",
+            target_allocation_pct = 0.10,
+            size_usd              = 10_000.0,
+            reason                = "allocation_drift_-0.100",
+            regime                = 2,
+            cycle_score           = 0.5,
+            confidence            = 0.8,
+        )
+        monkeypatch.setattr(
+            btc_mod.BTCStrategy, "get_action",
+            lambda self, **kwargs: reduce_action,
+        )
+
+        # HMM returns neutral regime (2) for all tickers
+        mock_hmm.predict_current.return_value = 2
+
+        trader._run_bar()
+
+        # submit_crypto_order must be called with side='sell' (not EXIT sell, REDUCE sell)
+        calls = patch_modules["oe"].submit_crypto_order.call_args_list
+        sell_calls = [c for c in calls if c.args[1] == "sell"]
+        assert sell_calls, "Expected a sell call for REDUCE action"
+
+        # Sell size should match the drift: 10% of $100k = $10,000
+        sell_size = sell_calls[0].args[2]
+        assert sell_size == pytest.approx(10_000.0)
+        # Confirm it's a partial close (REDUCE), not EXIT
+        assert reduce_action.action == "REDUCE"

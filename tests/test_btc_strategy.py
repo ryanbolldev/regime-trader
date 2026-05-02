@@ -542,6 +542,22 @@ class TestCurrentAllocationGuard:
         action = self._call(current_allocation=0.0, target_allocation=0.25)
         assert action.action == "BUY"
 
+    def test_guard_does_not_block_reduce_when_position_is_known(self):
+        # When current_position is set, the guard must not fire — even when
+        # current_allocation is well above target — so REDUCE can execute.
+        action = STRATEGY.get_action(
+            current_position   = _position(shares_held=0.4, current_price=50_000.0),
+            target_allocation  = 0.10,
+            portfolio_nav      = 100_000.0,
+            buying_power       = 100_000.0,
+            current_price      = 50_000.0,
+            regime             = 1,
+            cycle_score        = 0.5,
+            confidence         = 1.0,
+            current_allocation = 0.20,
+        )
+        assert action.action == "REDUCE"
+
     def test_exit_fires_before_guard_when_target_zero_and_position_held(self):
         # EXIT must still fire even when current_allocation >= target - threshold.
         # target=0.0, current_allocation=0.30 → guard: 0.30 >= 0.0 - 0.05 = -0.05 is True

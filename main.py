@@ -277,6 +277,16 @@ class RegimeTrader:
                     f"Circuit breaker triggered: {breaker}",
                     "warning",
                 )
+            if fired:
+                try:
+                    order_executor.cancel_all()
+                except Exception as exc:
+                    log.error("Failed to cancel orders after circuit breaker: %s", exc)
+                try:
+                    for pos in self._client.get_positions():
+                        self.close_position(pos.symbol)
+                except Exception as exc:
+                    log.error("Failed to close positions after circuit breaker: %s", exc)
         except Exception as exc:
             log.warning("Risk manager NAV update failed: %s", exc)
 
@@ -346,6 +356,11 @@ class RegimeTrader:
                 0.8 if engine.is_confirmed() and not engine.is_uncertain() else 0.5,
                 engine.is_uncertain(),
             )
+            return
+
+        # Crash regime: flatten any existing equity positions, no new longs
+        if regime == 0:
+            self._maybe_close_on_crash(ticker)
             return
 
         # Build signal
@@ -595,6 +610,70 @@ class RegimeTrader:
             alerts.send("daily_pnl", msg, "info")
         except Exception as exc:
             log.warning("Could not compute daily P&L: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Position management helpers
+    # ------------------------------------------------------------------
+
+    def close_position(self, ticker: str) -> None:
+        """Submit a market sell for the full open position in ticker.
+
+        Safe to call when no position exists — logs and returns quietly.
+        Used for manual intervention and circuit-breaker position flattening.
+        """
+        log.info("Manual close initiated for %s", ticker)
+        try:
+            positions = self._client.get_positions()
+            for pos in positions:
+                if pos.symbol.upper() == ticker.upper():
+                    qty = float(pos.qty)
+                    if qty > 0:
+                        log.info(
+                            "Submitting market sell: %s qty=%.6f", ticker, qty
+                        )
+                        self._client.submit_order(
+                            symbol     = ticker,
+                            qty        = qty,
+                            side       = "sell",
+                            order_type = "market",
+                        )
+                    return
+            log.info("close_position: no open position found for %s", ticker)
+        except Exception as exc:
+            log.error("close_position failed for %s: %s", ticker, exc)
+
+    def _maybe_close_on_crash(self, ticker: str) -> None:
+        """Close any held equity position when crash regime is detected."""
+        from core.regime_strategies import CrashStrategy
+
+        try:
+            nav = float(position_tracker.get_nav())
+        except Exception:
+            nav = float(self._client.get_account().portfolio_value)
+
+        try:
+            positions_dict = {
+                p.symbol: float(p.market_value)
+                for p in position_tracker.get_open_positions()
+            }
+        except Exception:
+            positions_dict = {}
+
+        held_value = positions_dict.get(ticker, 0.0)
+        if held_value <= 0:
+            log.debug("Crash regime: no position held for %s — skipping close", ticker)
+            return
+
+        strategy       = CrashStrategy()
+        target_positions = strategy.get_target_positions(nav, positions_dict, [ticker])
+        long_targets   = {t.ticker for t in target_positions if t.direction == "long"}
+
+        if ticker not in long_targets:
+            log.info(
+                "Crash regime: closing equity position for %s ($%.2f held)",
+                ticker, held_value,
+            )
+            self.close_position(ticker)
 
     # ------------------------------------------------------------------
     # Shutdown

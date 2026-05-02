@@ -176,9 +176,14 @@ class BTCStrategy:
                 confidence=confidence,
             )
 
-        # Defensive guard: broker-reported allocation is at or near target.
-        # Fires even when position lookup failed (current_position is None).
-        if current_allocation >= target_allocation - BTC_REBALANCE_THRESHOLD:
+        # Defensive guard: when position lookup failed (current_position is None),
+        # trust the broker-reported allocation to prevent a spurious BUY.
+        # Only fires when position is unknown — REDUCE decisions use the drift
+        # logic below, which relies on the populated BTCPosition object.
+        if (
+            current_position is None
+            and current_allocation >= target_allocation - BTC_REBALANCE_THRESHOLD
+        ):
             return BTCAction(
                 action="HOLD",
                 target_allocation_pct=target_allocation,
