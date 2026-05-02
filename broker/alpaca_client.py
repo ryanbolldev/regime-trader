@@ -185,8 +185,9 @@ def _handle_http_error(resp: requests.Response) -> None:
     if code in (401, 403):
         raise AuthError(f"HTTP {code}: {resp.text}")
     if code == 422:
+        logger.warning("Alpaca 422 rejection body: %s", resp.text)
         body = resp.text.lower()
-        if "insufficient" in body or "buying power" in body:
+        if "insufficient" in body or "buying power" in body or "funds" in body:
             raise InsufficientFundsError(f"HTTP 422: {resp.text}")
     if code == 429:
         raise RateLimitError(f"HTTP 429: {resp.text}")

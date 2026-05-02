@@ -216,11 +216,18 @@ def submit_crypto_order(
     log.info(
         "Crypto order: symbol=%s side=%s notional=$%.2f", symbol, side, notional_usd
     )
-    return c.submit_order_notional(
-        symbol=symbol,
-        notional_usd=notional_usd,
-        side=side,
-    )
+    try:
+        return c.submit_order_notional(
+            symbol=symbol,
+            notional_usd=notional_usd,
+            side=side,
+        )
+    except Exception as exc:
+        log.error(
+            "Crypto order failed: symbol=%s side=%s notional=$%.2f error=%s",
+            symbol, side, notional_usd, exc,
+        )
+        raise
 
 
 def cancel(order_id: str, client: Optional[AlpacaClient] = None) -> bool:
