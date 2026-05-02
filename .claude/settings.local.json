@@ -39,7 +39,8 @@
       "Bash(python -m pytest -x -q)",
       "Bash(python -m pytest -x -q --timeout=120)",
       "Bash(python -m pytest tests/test_order_executor.py tests/test_regime_strategies.py -v)",
-      "Bash(python -m pytest --tb=short -q)"
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python -m pytest tests/ -x -q)"
     ]
   }
 }

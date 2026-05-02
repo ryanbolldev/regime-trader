@@ -141,6 +141,7 @@ class BTCStrategy:
         regime: int = -1,
         cycle_score: float = 0.0,
         confidence: float = 1.0,
+        current_allocation: float = 0.0,
     ) -> BTCAction:
         """Return the recommended BTCAction to move toward target_allocation."""
         if portfolio_nav <= 0:
@@ -170,6 +171,19 @@ class BTCStrategy:
                 target_allocation_pct=0.0,
                 size_usd=current_value,
                 reason="target_allocation_zero",
+                regime=regime,
+                cycle_score=cycle_score,
+                confidence=confidence,
+            )
+
+        # Defensive guard: broker-reported allocation is at or near target.
+        # Fires even when position lookup failed (current_position is None).
+        if current_allocation >= target_allocation - BTC_REBALANCE_THRESHOLD:
+            return BTCAction(
+                action="HOLD",
+                target_allocation_pct=target_allocation,
+                size_usd=0.0,
+                reason="at_target_allocation",
                 regime=regime,
                 cycle_score=cycle_score,
                 confidence=confidence,

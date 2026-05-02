@@ -493,3 +493,69 @@ class TestSubmitCryptoOrder:
         result = submit_crypto_order("BTC/USD", "sell", 10_000.0, mock_client)
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestCurrentAllocationGuard
+# ---------------------------------------------------------------------------
+
+class TestCurrentAllocationGuard:
+    """Verify the defensive current_allocation guard added to get_action()."""
+
+    def _call(self, current_allocation: float, target_allocation: float) -> BTCAction:
+        return STRATEGY.get_action(
+            current_position   = None,
+            target_allocation  = target_allocation,
+            portfolio_nav      = 100_000.0,
+            buying_power       = 100_000.0,
+            current_price      = 50_000.0,
+            regime             = 1,
+            cycle_score        = 0.5,
+            confidence         = 1.0,
+            current_allocation = current_allocation,
+        )
+
+    def test_hold_when_allocation_equals_target(self):
+        action = self._call(current_allocation=0.25, target_allocation=0.25)
+        assert action.action == "HOLD"
+        assert action.reason == "at_target_allocation"
+
+    def test_hold_when_allocation_within_threshold_below_target(self):
+        # 0.25 target, 0.21 current → diff = 0.04 < threshold 0.05 → HOLD
+        action = self._call(current_allocation=0.21, target_allocation=0.25)
+        assert action.action == "HOLD"
+        assert action.reason == "at_target_allocation"
+
+    def test_hold_when_allocation_exceeds_target(self):
+        # Over-allocated: should still HOLD (not BUY more)
+        action = self._call(current_allocation=0.30, target_allocation=0.25)
+        assert action.action == "HOLD"
+        assert action.reason == "at_target_allocation"
+
+    def test_buy_when_allocation_well_below_target(self):
+        # 0.25 target, 0.10 current → diff = 0.15 > threshold → BUY
+        action = self._call(current_allocation=0.10, target_allocation=0.25)
+        assert action.action == "BUY"
+
+    def test_buy_when_no_position_and_allocation_zero(self):
+        # current_allocation=0.0 with no position — should BUY toward 0.25
+        action = self._call(current_allocation=0.0, target_allocation=0.25)
+        assert action.action == "BUY"
+
+    def test_exit_fires_before_guard_when_target_zero_and_position_held(self):
+        # EXIT must still fire even when current_allocation >= target - threshold.
+        # target=0.0, current_allocation=0.30 → guard: 0.30 >= 0.0 - 0.05 = -0.05 is True
+        # BUT the EXIT check comes first and current_value > 0, so EXIT wins.
+        action = STRATEGY.get_action(
+            current_position   = _position(shares_held=1.0, current_price=50_000.0),
+            target_allocation  = 0.0,
+            portfolio_nav      = 100_000.0,
+            buying_power       = 100_000.0,
+            current_price      = 50_000.0,
+            regime             = 0,
+            cycle_score        = 0.0,
+            confidence         = 1.0,
+            current_allocation = 0.50,
+        )
+        assert action.action == "EXIT"
+        assert action.reason == "target_allocation_zero"

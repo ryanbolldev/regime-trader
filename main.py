@@ -429,10 +429,13 @@ class RegimeTrader:
 
         # Resolve current BTC position from broker
         current_position: Optional[BTCPosition] = None
+        current_allocation: float = 0.0
         try:
             for pos in self._client.get_positions():
-                if pos.symbol.upper() in ("BTC/USD", "BTC"):
+                if pos.symbol.upper() in ("BTC/USD", "BTC", "BTCUSD"):
                     cost = float(pos.avg_entry_price)
+                    mkt_val = float(pos.market_value)
+                    current_allocation = mkt_val / nav if nav > 0 else 0.0
                     current_position = BTCPosition(
                         symbol=pos.symbol,
                         shares_held=float(pos.qty),
@@ -466,6 +469,7 @@ class RegimeTrader:
             regime            = regime,
             cycle_score       = float(cycle_signal.composite_score),
             confidence        = confidence,
+            current_allocation = current_allocation,
         )
 
         if action.action == "HOLD":
