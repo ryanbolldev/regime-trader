@@ -518,19 +518,18 @@ class TestCurrentAllocationGuard:
     def test_hold_when_allocation_equals_target(self):
         action = self._call(current_allocation=0.25, target_allocation=0.25)
         assert action.action == "HOLD"
-        assert action.reason == "at_target_allocation"
+        assert action.reason == "within_threshold"
 
-    def test_hold_when_allocation_within_threshold_below_target(self):
-        # 0.25 target, 0.21 current → diff = 0.04 < threshold 0.05 → HOLD
+    def test_buy_when_allocation_within_threshold_below_target(self):
+        # 0.25 target, 0.21 current → under target → BUY (guard is one-sided)
         action = self._call(current_allocation=0.21, target_allocation=0.25)
-        assert action.action == "HOLD"
-        assert action.reason == "at_target_allocation"
+        assert action.action == "BUY"
 
     def test_hold_when_allocation_exceeds_target(self):
-        # Over-allocated: should still HOLD (not BUY more)
+        # Over by 0.05 (= threshold) → HOLD, not REDUCE
         action = self._call(current_allocation=0.30, target_allocation=0.25)
         assert action.action == "HOLD"
-        assert action.reason == "at_target_allocation"
+        assert action.reason == "within_threshold"
 
     def test_buy_when_allocation_well_below_target(self):
         # 0.25 target, 0.10 current → diff = 0.15 > threshold → BUY
@@ -557,6 +556,27 @@ class TestCurrentAllocationGuard:
             current_allocation = 0.20,
         )
         assert action.action == "REDUCE"
+
+    def test_reduce_when_over_allocated_no_position(self):
+        # 33% current, 5% target, position=None → REDUCE with correct size
+        action = self._call(current_allocation=0.33, target_allocation=0.05)
+        assert action.action == "REDUCE"
+        assert action.size_usd == pytest.approx((0.33 - 0.05) * 100_000.0)
+
+    def test_hold_when_current_equals_target_no_position(self):
+        # 5% current, 5% target, position=None → HOLD (at target)
+        action = self._call(current_allocation=0.05, target_allocation=0.05)
+        assert action.action == "HOLD"
+
+    def test_buy_when_under_target_within_threshold_no_position(self):
+        # 4% current, 5% target, position=None → BUY (one-sided: no HOLD zone from below)
+        action = self._call(current_allocation=0.04, target_allocation=0.05)
+        assert action.action == "BUY"
+
+    def test_buy_when_zero_current_with_target_no_position(self):
+        # 0% current, 5% target, position=None → BUY
+        action = self._call(current_allocation=0.0, target_allocation=0.05)
+        assert action.action == "BUY"
 
     def test_exit_fires_before_guard_when_target_zero_and_position_held(self):
         # EXIT must still fire even when current_allocation >= target - threshold.

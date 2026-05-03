@@ -177,25 +177,34 @@ class BTCStrategy:
             )
 
         # Defensive guard: when position lookup failed (current_position is None),
-        # trust the broker-reported allocation to prevent a spurious BUY.
-        # Only fires when position is unknown — REDUCE decisions use the drift
-        # logic below, which relies on the populated BTCPosition object.
-        if (
-            current_position is None
-            and current_allocation >= target_allocation - BTC_REBALANCE_THRESHOLD
-        ):
-            return BTCAction(
-                action="HOLD",
-                target_allocation_pct=target_allocation,
-                size_usd=0.0,
-                reason="at_target_allocation",
-                regime=regime,
-                cycle_score=cycle_score,
-                confidence=confidence,
-            )
+        # use broker-reported allocation to prevent spurious buys/reduces.
+        # Asymmetric: suppresses action only when at or above target;
+        # under-target always falls through to BUY logic.
+        if current_position is None:
+            if current_allocation >= target_allocation:
+                excess = current_allocation - target_allocation
+                if excess <= BTC_REBALANCE_THRESHOLD:
+                    return BTCAction(
+                        action="HOLD",
+                        target_allocation_pct=target_allocation,
+                        size_usd=0.0,
+                        reason="within_threshold",
+                        regime=regime,
+                        cycle_score=cycle_score,
+                        confidence=confidence,
+                    )
+                return BTCAction(
+                    action="REDUCE",
+                    target_allocation_pct=target_allocation,
+                    size_usd=excess * portfolio_nav,
+                    reason="over_target",
+                    regime=regime,
+                    cycle_score=cycle_score,
+                    confidence=confidence,
+                )
 
-        # HOLD: within rebalance threshold
-        if abs(drift) <= BTC_REBALANCE_THRESHOLD:
+        # HOLD: within rebalance threshold (position-based drift only)
+        if current_position is not None and abs(drift) <= BTC_REBALANCE_THRESHOLD:
             return BTCAction(
                 action="HOLD",
                 target_allocation_pct=target_allocation,
