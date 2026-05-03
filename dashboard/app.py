@@ -13,10 +13,13 @@ Run with:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+_REFRESH_SECS = 30
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -105,14 +108,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ---------------------------------------------------------------------------
-# Auto-refresh every 30 seconds
-# ---------------------------------------------------------------------------
-try:
-    import streamlit_autorefresh  # type: ignore
-    streamlit_autorefresh.st_autorefresh(interval=30_000, key="autorefresh")
-except ImportError:
-    pass  # optional dependency
+# Auto-refresh is handled at the bottom of the script via time.sleep + st.rerun()
 
 # ---------------------------------------------------------------------------
 # Load state
@@ -268,3 +264,9 @@ with col6:
     p1.metric("Sharpe Ratio",  f"{sharpe:.2f}"    if sharpe   is not None else "—")
     p2.metric("Max Drawdown",  _fmt_pct(max_dd)   if max_dd   is not None else "—")
     p3.metric("Win Rate",      _fmt_pct(win_rate)  if win_rate is not None else "—")
+
+# ---------------------------------------------------------------------------
+# Auto-refresh every 30 seconds (native — no extra dependency required)
+# ---------------------------------------------------------------------------
+time.sleep(_REFRESH_SECS)
+st.rerun()

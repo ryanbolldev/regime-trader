@@ -31,6 +31,8 @@ Shutdown (SIGINT / SIGTERM or unhandled exception):
 
 from __future__ import annotations
 
+import collections
+import json
 import logging
 import os
 import signal as signal_module
@@ -124,6 +126,11 @@ class RegimeTrader:
         self._shutdown_reason:  str  = ""
         self._current_regime:   dict[str, int] = {}  # per-ticker last confirmed regime
         self._market_was_open:  bool = False
+
+        # Dashboard state tracking
+        self._recent_signals:   collections.deque = collections.deque(maxlen=50)
+        self._last_bar_data:    dict[str, dict]   = {}   # ticker → {regime, confidence, is_uncertain}
+        self._regime_history:   dict[str, collections.deque] = {}  # ticker → rolling 20-bar window
 
     # ------------------------------------------------------------------
     # Startup
@@ -290,6 +297,8 @@ class RegimeTrader:
         except Exception as exc:
             log.warning("Risk manager NAV update failed: %s", exc)
 
+        self._write_dashboard_state()
+
     def _process_ticker(self, ticker: str) -> None:
         """Run the full signal pipeline for one ticker."""
         ohlcv = self._fetch_bars_with_retry(ticker)
@@ -329,6 +338,17 @@ class RegimeTrader:
         if regime == -1:
             log.debug("%s: no regime confirmed yet, skipping signal", ticker)
             return
+
+        # Record per-bar state for dashboard writer
+        _confidence = 0.8 if engine.is_confirmed() and not engine.is_uncertain() else 0.5
+        self._last_bar_data[ticker] = {
+            "regime":       regime,
+            "confidence":   _confidence,
+            "is_uncertain": engine.is_uncertain(),
+        }
+        if ticker not in self._regime_history:
+            self._regime_history[ticker] = collections.deque(maxlen=20)
+        self._regime_history[ticker].append(regime)
 
         if ticker in settings.REFERENCE_TICKERS:
             log.debug("%s: reference ticker — regime context only, no trade", ticker)
@@ -405,6 +425,14 @@ class RegimeTrader:
                 "info",
             )
             position_tracker.on_fill(order_result)
+            self._recent_signals.append({
+                "ts":       datetime.now(tz=timezone.utc).isoformat(),
+                "ticker":   ticker,
+                "regime":   signal.regime_name,
+                "action":   "buy",
+                "size_usd": round(size, 2),
+                "conf":     round(confidence, 2),
+            })
         except Exception as exc:
             log.error("Order execution failed for %s: %s", ticker, exc)
 
@@ -578,6 +606,14 @@ class RegimeTrader:
                     cycle_score=float(cycle_signal.composite_score),
                 )
                 position_tracker.on_fill(result)
+                self._recent_signals.append({
+                    "ts":       datetime.now(tz=timezone.utc).isoformat(),
+                    "ticker":   btc_symbol,
+                    "regime":   _REGIME_NAMES.get(regime, str(regime)),
+                    "action":   action.action.lower(),
+                    "size_usd": round(order_size, 2),
+                    "conf":     round(confidence, 2),
+                })
         except Exception as exc:
             log.error("BTC order execution failed: %s", exc)
 
@@ -610,6 +646,104 @@ class RegimeTrader:
             alerts.send("daily_pnl", msg, "info")
         except Exception as exc:
             log.warning("Could not compute daily P&L: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Dashboard state writer
+    # ------------------------------------------------------------------
+
+    def _write_dashboard_state(self) -> None:
+        """Serialize current system state to logs/dashboard_state.json."""
+        try:
+            nav = float(position_tracker.get_nav())
+        except Exception:
+            nav = 0.0
+
+        try:
+            daily_pnl = float(position_tracker.get_daily_pnl())
+        except Exception:
+            daily_pnl = 0.0
+        daily_pnl_pct = daily_pnl / nav if nav > 0 else 0.0
+
+        try:
+            dd = self._risk.get_drawdown_state(nav)
+        except Exception:
+            dd = {"peak_drawdown": 0.0, "daily_drawdown": 0.0, "weekly_drawdown": 0.0}
+
+        try:
+            cb = self._risk.get_circuit_breaker_status()
+            active_breakers = [
+                name for name, active in [
+                    ("peak_drawdown_lockout", cb.peak_drawdown_lockout),
+                    ("daily_halt",            cb.daily_halt),
+                    ("daily_halve_sizes",     cb.daily_halve_sizes),
+                    ("weekly_resize",         cb.weekly_resize),
+                ] if active
+            ]
+        except Exception:
+            active_breakers = []
+
+        # Use the primary ticker's regime for the headline display.
+        # Fall back through TICKERS order until we find one with a confirmed regime.
+        primary = next(
+            (t for t in settings.TICKERS if self._last_bar_data.get(t, {}).get("regime", -1) != -1),
+            None,
+        )
+        p_data      = self._last_bar_data.get(primary, {}) if primary else {}
+        regime_id   = p_data.get("regime",       -1)
+        confidence  = p_data.get("confidence",   1.0)
+        is_uncertain = p_data.get("is_uncertain", False)
+        regime_name = _REGIME_NAMES.get(regime_id, "unconfirmed")
+
+        # Flicker count: transitions in the rolling 20-bar regime window per ticker
+        def _flicker(hist: collections.deque) -> int:
+            items = list(hist)
+            return sum(1 for a, b in zip(items, items[1:]) if a != b)
+        flicker_count = sum(_flicker(h) for h in self._regime_history.values())
+
+        try:
+            open_positions = [
+                {
+                    "symbol":        pos.symbol,
+                    "qty":           float(pos.qty),
+                    "market_value":  float(pos.market_value),
+                    "unrealized_pl": float(pos.unrealized_pl),
+                    "side":          str(pos.side),
+                }
+                for pos in self._client.get_positions()
+            ]
+        except Exception:
+            open_positions = []
+
+        state = {
+            "regime":           regime_name,
+            "regime_id":        regime_id,
+            "regime_name":      regime_name,
+            "confidence":       confidence,
+            "is_uncertain":     is_uncertain,
+            "is_confirmed":     regime_id != -1,
+            "flicker_count":    flicker_count,
+            "nav":              nav,
+            "daily_pnl":        daily_pnl,
+            "daily_pnl_pct":    daily_pnl_pct,
+            "peak_drawdown":    dd["peak_drawdown"],
+            "drawdown_pct":     dd["peak_drawdown"],
+            "daily_drawdown":   dd["daily_drawdown"],
+            "weekly_drawdown":  dd["weekly_drawdown"],
+            "circuit_breakers": active_breakers,
+            "open_positions":   open_positions,
+            "positions":        open_positions,
+            "signals":          list(self._recent_signals),
+            "updated_at":       datetime.now(tz=timezone.utc).isoformat(),
+            "last_updated":     datetime.now(tz=timezone.utc).isoformat(),
+        }
+
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = LOG_DIR / "dashboard_state.json.tmp"
+            tmp.write_text(json.dumps(state, default=str), encoding="utf-8")
+            tmp.replace(LOG_DIR / "dashboard_state.json")
+        except Exception as exc:
+            log.warning("Failed to write dashboard state: %s", exc)
 
     # ------------------------------------------------------------------
     # Position management helpers

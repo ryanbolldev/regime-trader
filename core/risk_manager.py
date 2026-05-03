@@ -189,6 +189,17 @@ class RiskManager:
     def is_locked(self) -> bool:
         return self._locked
 
+    def get_drawdown_state(self, current_nav: float) -> dict[str, float]:
+        """Return current drawdown percentages for monitoring / dashboard."""
+        hwm    = self._high_water_mark
+        daily  = self._daily_open_nav
+        weekly = self._weekly_open_nav
+        return {
+            "peak_drawdown":   (current_nav - hwm)    / hwm    if hwm    > 0 else 0.0,
+            "daily_drawdown":  (current_nav - daily)  / daily  if daily  > 0 else 0.0,
+            "weekly_drawdown": (current_nav - weekly) / weekly if weekly > 0 else 0.0,
+        }
+
     @property
     def all_fired(self) -> list[str]:
         """Every circuit-breaker event that has fired since initialize()."""
