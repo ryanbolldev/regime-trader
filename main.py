@@ -474,11 +474,23 @@ class RegimeTrader:
         current_position: Optional[BTCPosition] = None
         current_allocation: float = 0.0
         try:
-            for pos in self._client.get_positions():
+            broker_positions = self._client.get_positions()
+            broker_symbols   = [p.symbol for p in broker_positions]
+            log.info(
+                "BTC lookup: broker reports %d position(s) — symbols=%s",
+                len(broker_positions), broker_symbols,
+            )
+            for pos in broker_positions:
                 if pos.symbol.upper() in ("BTC/USD", "BTC", "BTCUSD"):
-                    cost = float(pos.avg_entry_price)
+                    cost    = float(pos.avg_entry_price)
                     mkt_val = float(pos.market_value)
                     current_allocation = mkt_val / nav if nav > 0 else 0.0
+                    log.info(
+                        "BTC position found: symbol=%s  qty=%.6f  "
+                        "market_value=$%.2f  current_allocation=%.2f%%  nav=$%.2f",
+                        pos.symbol, float(pos.qty),
+                        mkt_val, current_allocation * 100, nav,
+                    )
                     current_position = BTCPosition(
                         symbol=pos.symbol,
                         shares_held=float(pos.qty),
@@ -492,6 +504,12 @@ class RegimeTrader:
                         entry_cycle_score=float(cycle_signal.composite_score),
                     )
                     break
+            else:
+                log.info(
+                    "BTC position: no matching symbol in broker positions "
+                    "(symbols=%s) — current_allocation=0.0%%",
+                    broker_symbols,
+                )
         except Exception as exc:
             log.warning("BTC: could not fetch broker position: %s", exc)
 
@@ -503,32 +521,37 @@ class RegimeTrader:
         strategy     = BTCStrategy()
         target_alloc = strategy.get_target_allocation(regime, cycle_signal, is_uncertain)
 
+        log.info(
+            "BTC guard check: current_allocation=%.2f%%  target=%.2f%%  "
+            "threshold=%.2f%%  position_known=%s",
+            current_allocation * 100,
+            target_alloc * 100,
+            settings.BTC_REBALANCE_THRESHOLD * 100,
+            current_position is not None,
+        )
+
         action = strategy.get_action(
-            current_position  = current_position,
-            target_allocation = target_alloc,
-            portfolio_nav     = nav,
-            buying_power      = buying_power,
-            current_price     = current_price,
-            regime            = regime,
-            cycle_score       = float(cycle_signal.composite_score),
-            confidence        = confidence,
+            current_position   = current_position,
+            target_allocation  = target_alloc,
+            portfolio_nav      = nav,
+            buying_power       = buying_power,
+            current_price      = current_price,
+            regime             = regime,
+            cycle_score        = float(cycle_signal.composite_score),
+            confidence         = confidence,
             current_allocation = current_allocation,
         )
 
+        log.info(
+            "BTC get_action: action=%s  reason=%s  size=$%.2f  "
+            "regime=%s  cycle=%.2f  uncertain=%s  confidence=%.2f",
+            action.action, action.reason, action.size_usd,
+            _REGIME_NAMES.get(regime, str(regime)),
+            float(cycle_signal.composite_score),
+            is_uncertain, confidence,
+        )
+
         if action.action == "HOLD":
-            if settings.LIVE_ACCOUNT_MODE:
-                log.info(
-                    "LIVE MODE BTC: HOLD — target=%.1f%% within rebalance threshold  "
-                    "regime=%s  cycle=%.2f  uncertain=%s  confidence=%.2f",
-                    target_alloc * 100,
-                    _REGIME_NAMES.get(regime, str(regime)),
-                    float(cycle_signal.composite_score),
-                    is_uncertain, confidence,
-                )
-            else:
-                log.debug(
-                    "BTC: HOLD (target=%.1f%% within threshold)", target_alloc * 100
-                )
             return
 
         log.info(
