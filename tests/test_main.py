@@ -348,6 +348,51 @@ class TestBarProcessing:
         trader._run_bar()
         patch_modules["pt"].on_fill.assert_called()
 
+    def test_trade_placed_alert_not_fired_when_submit_returns_none(
+        self, trader, mock_hmm, patch_modules
+    ):
+        from config.settings import TICKERS, REFERENCE_TICKERS
+        tradeable = next(t for t in TICKERS if t not in REFERENCE_TICKERS)
+        trader._current_regime = {t: 2 for t in TICKERS}
+        mock_hmm.predict_current.return_value = 3
+        mock_hmm.regime_name.return_value = "bull"
+        patch_modules["oe"].submit.return_value = None   # dedup / zero-size path
+        trader._run_bar()
+        trade_alerts = [c for c in patch_modules["al"].send.call_args_list
+                        if c.args[0] == "trade_placed"]
+        assert len(trade_alerts) == 0, "alert must not fire when submit returns None"
+
+    def test_trade_placed_alert_passes_symbol_and_side(
+        self, trader, mock_hmm, patch_modules
+    ):
+        from config.settings import TICKERS, REFERENCE_TICKERS
+        tradeable = next(t for t in TICKERS if t not in REFERENCE_TICKERS)
+        trader._current_regime = {t: 2 for t in TICKERS}
+        mock_hmm.predict_current.return_value = 3
+        mock_hmm.regime_name.return_value = "bull"
+        trader._run_bar()
+        trade_calls = [c for c in patch_modules["al"].send.call_args_list
+                       if c.args[0] == "trade_placed"]
+        assert trade_calls, "expected at least one trade_placed alert"
+        kwargs = trade_calls[0].kwargs
+        assert kwargs["symbol"] == tradeable
+        assert kwargs["side"]   == "buy"
+
+    def test_on_fill_not_called_when_submit_returns_none(
+        self, trader, mock_hmm, mock_risk, patch_modules
+    ):
+        from config.settings import TICKERS
+        trader._current_regime = {t: 3 for t in TICKERS}
+        mock_hmm.predict_current.return_value = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+        # Both equity and BTC paths must return None for on_fill to stay silent
+        patch_modules["oe"].submit.return_value             = None
+        patch_modules["oe"].submit_crypto_order.return_value = None
+        trader._run_bar()
+        patch_modules["pt"].on_fill.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # TestDataFeedRetry

@@ -155,12 +155,12 @@ class BTCStrategy:
                 confidence=confidence,
             )
 
-        if current_position is not None and current_position.shares_held > 0:
-            current_value = current_position.shares_held * current_price
-            current_alloc = current_value / portfolio_nav
+        if current_position is not None:
+            current_alloc = current_allocation        # use broker-reported value
+            current_value = current_alloc * portfolio_nav
         else:
             current_value = 0.0
-            current_alloc = 0.0
+            current_alloc = current_allocation        # broker-reported fallback
 
         drift = target_allocation - current_alloc
 

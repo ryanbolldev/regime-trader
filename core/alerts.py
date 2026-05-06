@@ -22,7 +22,7 @@ import smtplib
 import time
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -147,6 +147,9 @@ def send(
     severity: str = "info",
     *,
     symbol: str = "",
+    side: str = "",
+    size_usd: Optional[float] = None,
+    entry_price: Optional[float] = None,
 ) -> None:
     """Dispatch an alert to all configured channels, respecting per-symbol cooldown.
 
@@ -173,7 +176,14 @@ def send(
         "message":   message,
         "regime":    None,
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-        "data":      {"severity": severity, "raw_event": event_type},
+        "data": {
+            "severity":    severity,
+            "raw_event":   event_type,
+            "symbol":      symbol or None,
+            "side":        side or None,
+            "size_usd":    size_usd,
+            "entry_price": entry_price,
+        },
     }
 
     try:
@@ -197,17 +207,23 @@ def send_btc_trade_alert(
     *,
     regime_name: str = "",
     cycle_score: float = 0.0,
+    order_result: object = None,
 ) -> None:
     """Fire a BTC_TRADE alert for BUY / SELL / REDUCE / EXIT actions.
 
-    ``action`` must be a BTCAction dataclass instance.  Using 'object' to
-    avoid a circular import; duck-typing is safe here.
+    ``action`` must be a BTCAction dataclass instance.  ``order_result`` must
+    be an OrderResult (or None) — used to populate the entry_price field.
+    Using 'object' types to avoid circular imports; duck-typing is safe here.
     """
     try:
-        act         = str(getattr(action, "action", ""))
-        size_usd    = float(getattr(action, "size_usd", 0.0))
+        act          = str(getattr(action, "action", ""))
+        size_usd     = float(getattr(action, "size_usd", 0.0))
         target_alloc = float(getattr(action, "target_allocation_pct", 0.0))
-        reason      = str(getattr(action, "reason", ""))
+        reason       = str(getattr(action, "reason", ""))
+
+        raw_price    = getattr(order_result, "filled_avg_price", None) if order_result is not None else None
+        entry_price: Optional[float] = float(raw_price) if raw_price is not None else None
+        btc_side     = "buy" if act == "BUY" else "sell"
 
         msg = (
             f"BTC TRADE\n"
@@ -218,7 +234,13 @@ def send_btc_trade_alert(
             f"Cycle Score: {cycle_score * 100:.1f}%\n"
             f"Reason: {reason}"
         )
-        send("btc_trade", msg, "info", symbol="BTC")
+        send(
+            "btc_trade", msg, "info",
+            symbol="BTC",
+            side=btc_side,
+            size_usd=size_usd,
+            entry_price=entry_price,
+        )
     except Exception as exc:
         log.warning("BTC trade alert error: %s", exc)
 

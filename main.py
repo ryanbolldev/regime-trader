@@ -413,26 +413,31 @@ class RegimeTrader:
         try:
             size = signal.position_size_usd * approval.size_multiplier
             order_result = order_executor.submit(signal, symbol=ticker)
-            log.info(
-                "Trade placed: %s  side=buy  size=$%.2f  regime=%s  request_id=%s",
-                ticker, size, signal.regime_name,
-                getattr(order_result, "request_id", ""),
-            )
-            alerts.send(
-                "trade_placed",
-                f"Trade placed: {ticker}  side=buy  "
-                f"size=${size:.2f}  regime={signal.regime_name}",
-                "info",
-            )
-            position_tracker.on_fill(order_result)
-            self._recent_signals.append({
-                "ts":       datetime.now(tz=timezone.utc).isoformat(),
-                "ticker":   ticker,
-                "regime":   signal.regime_name,
-                "action":   "buy",
-                "size_usd": round(size, 2),
-                "conf":     round(confidence, 2),
-            })
+            if order_result is not None:
+                log.info(
+                    "Trade placed: %s  side=buy  size=$%.2f  regime=%s  request_id=%s",
+                    ticker, size, signal.regime_name,
+                    getattr(order_result, "request_id", ""),
+                )
+                alerts.send(
+                    "trade_placed",
+                    f"Trade placed: {ticker}  side=buy  "
+                    f"size=${size:.2f}  regime={signal.regime_name}",
+                    "info",
+                    symbol=ticker,
+                    side="buy",
+                    size_usd=size,
+                    entry_price=order_result.filled_avg_price,
+                )
+                position_tracker.on_fill(order_result)
+                self._recent_signals.append({
+                    "ts":       datetime.now(tz=timezone.utc).isoformat(),
+                    "ticker":   ticker,
+                    "regime":   signal.regime_name,
+                    "action":   "buy",
+                    "size_usd": round(size, 2),
+                    "conf":     round(confidence, 2),
+                })
         except Exception as exc:
             log.error("Order execution failed for %s: %s", ticker, exc)
 
@@ -627,6 +632,7 @@ class RegimeTrader:
                     action,
                     regime_name=_REGIME_NAMES.get(regime, str(regime)),
                     cycle_score=float(cycle_signal.composite_score),
+                    order_result=result,
                 )
                 position_tracker.on_fill(result)
                 self._recent_signals.append({

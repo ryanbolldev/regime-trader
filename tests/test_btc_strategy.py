@@ -214,11 +214,12 @@ class TestGetAction:
         # current = 0.50 * NAV, target = 0.52 → drift = 0.02 < 0.05
         pos = _position(shares_held=1.0, current_price=self.PRICE)
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.52,
-            portfolio_nav     = self.NAV,
-            buying_power      = 50_000.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.52,
+            portfolio_nav      = self.NAV,
+            buying_power       = 50_000.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.50,   # 1.0 BTC × $50k / $100k NAV
         )
         assert action.action == "HOLD"
 
@@ -227,11 +228,12 @@ class TestGetAction:
         pos = _position(shares_held=0.9, current_price=self.PRICE)
         # current_value = 0.9 * 50_000 = 45_000; alloc = 45_000/100_000 = 0.45
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.50,
-            portfolio_nav     = self.NAV,
-            buying_power      = 50_000.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.50,
+            portfolio_nav      = self.NAV,
+            buying_power       = 50_000.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.45,   # 0.9 BTC × $50k / $100k NAV
         )
         assert action.action == "HOLD"
 
@@ -272,22 +274,24 @@ class TestGetAction:
         # current = 1.4 BTC × $50_000 = $70_000 = 70%; target = 50%
         pos = _position(shares_held=1.4, current_price=self.PRICE)
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.50,
-            portfolio_nav     = self.NAV,
-            buying_power      = 0.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.50,
+            portfolio_nav      = self.NAV,
+            buying_power       = 0.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.70,   # 1.4 BTC × $50k / $100k NAV
         )
         assert action.action == "REDUCE"
 
     def test_reduce_size_is_drift_times_nav(self):
         pos = _position(shares_held=1.4, current_price=self.PRICE)
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.50,
-            portfolio_nav     = self.NAV,
-            buying_power      = 0.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.50,
+            portfolio_nav      = self.NAV,
+            buying_power       = 0.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.70,   # 1.4 BTC × $50k / $100k NAV
         )
         # drift = 0.50 - 0.70 = -0.20; size = 0.20 * 100_000 = 20_000
         assert action.size_usd == pytest.approx(20_000.0)
@@ -295,24 +299,26 @@ class TestGetAction:
     def test_exit_when_target_zero_and_position_held(self):
         pos = _position(shares_held=0.1, current_price=self.PRICE)
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.0,
-            portfolio_nav     = self.NAV,
-            buying_power      = 0.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.0,
+            portfolio_nav      = self.NAV,
+            buying_power       = 0.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.05,   # 0.1 BTC × $50k / $100k NAV
         )
         assert action.action == "EXIT"
 
     def test_exit_size_equals_full_position_value(self):
         pos = _position(shares_held=0.2, current_price=self.PRICE)
         action = STRATEGY.get_action(
-            current_position  = pos,
-            target_allocation = 0.0,
-            portfolio_nav     = self.NAV,
-            buying_power      = 0.0,
-            current_price     = self.PRICE,
+            current_position   = pos,
+            target_allocation  = 0.0,
+            portfolio_nav      = self.NAV,
+            buying_power       = 0.0,
+            current_price      = self.PRICE,
+            current_allocation = 0.10,   # 0.2 BTC × $50k / $100k NAV
         )
-        # size = 0.2 * 50_000 = 10_000
+        # size = 0.10 * 100_000 = 10_000
         assert action.size_usd == pytest.approx(10_000.0)
 
     def test_hold_when_zero_nav(self):

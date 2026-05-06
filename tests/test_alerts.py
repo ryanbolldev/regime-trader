@@ -213,6 +213,108 @@ class TestSend:
         for field in ("event", "message", "regime", "timestamp", "data"):
             assert field in payload, f"Missing field: {field}"
 
+    def test_structured_trade_fields_in_data(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send(
+                "trade_placed", "bought SPY", "info",
+                symbol="SPY", side="buy", size_usd=5000.0, entry_price=452.10,
+            )
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["symbol"]      == "SPY"
+        assert data["side"]        == "buy"
+        assert data["size_usd"]    == pytest.approx(5000.0)
+        assert data["entry_price"] == pytest.approx(452.10)
+
+    def test_missing_structured_fields_default_to_none(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("regime_change", "bull", "info")
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["symbol"]      is None
+        assert data["side"]        is None
+        assert data["size_usd"]    is None
+        assert data["entry_price"] is None
+
+    def test_per_symbol_cooldown_for_trade_placed(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("trade_placed", "SPY buy", "info", symbol="SPY")
+            alerts_mod.send("trade_placed", "SPY buy", "info", symbol="SPY")   # suppressed
+            alerts_mod.send("trade_placed", "AAPL buy", "info", symbol="AAPL") # different ticker
+        assert mock_post.call_count == 2
+
+
+class TestSendBtcTradeAlert:
+
+    def _make_action(self, act="BUY", size=10_000.0, target=0.10, reason="test"):
+        a = MagicMock()
+        a.action                = act
+        a.size_usd              = size
+        a.target_allocation_pct = target
+        a.reason                = reason
+        return a
+
+    def _make_order_result(self, filled_avg_price=None):
+        r = MagicMock()
+        r.filled_avg_price = filled_avg_price
+        return r
+
+    def test_fires_btc_trade_event(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(self._make_action())
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["event"] == "BTC_TRADE"
+
+    def test_entry_price_populated_from_order_result(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        order_result = self._make_order_result(filled_avg_price=65_432.10)
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(
+                self._make_action(), order_result=order_result
+            )
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["entry_price"] == pytest.approx(65_432.10)
+
+    def test_entry_price_none_when_no_order_result(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(self._make_action())
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["entry_price"] is None
+
+    def test_entry_price_none_when_filled_avg_price_is_none(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        order_result = self._make_order_result(filled_avg_price=None)
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(
+                self._make_action(), order_result=order_result
+            )
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["entry_price"] is None
+
+    def test_buy_action_sets_side_buy(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(self._make_action(act="BUY"))
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["side"] == "buy"
+
+    def test_reduce_action_sets_side_sell(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(self._make_action(act="REDUCE"))
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["side"] == "sell"
+
+    def test_size_usd_in_data(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send_btc_trade_alert(self._make_action(size=7_500.0))
+        data = mock_post.call_args.kwargs["json"]["data"]
+        assert data["size_usd"] == pytest.approx(7_500.0)
+
 
 # ---------------------------------------------------------------------------
 # TestSetCooldown
