@@ -53,6 +53,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# How many bars after a BUY to hold if the broker position still shows None.
+# Broker position updates can lag 1-2 bars after order fill.
+_BTC_UNCONFIRMED_BARS = 2
+
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -101,6 +105,14 @@ class BTCStrategy:
         4: 0.08,   # euphoria — trim (mean-reversion risk)
     }
 
+    def __init__(self) -> None:
+        self._bar_counter: int = 0
+        self._last_buy_bar: Optional[int] = None  # None = no buy placed yet
+
+    def record_buy(self) -> None:
+        """Call immediately after a BUY order is submitted successfully."""
+        self._last_buy_bar = self._bar_counter
+
     def get_target_allocation(
         self,
         regime: int,
@@ -144,6 +156,8 @@ class BTCStrategy:
         current_allocation: float = 0.0,
     ) -> BTCAction:
         """Return the recommended BTCAction to move toward target_allocation."""
+        self._bar_counter += 1
+
         if portfolio_nav <= 0:
             return BTCAction(
                 action="HOLD",
@@ -181,6 +195,19 @@ class BTCStrategy:
         # Asymmetric: suppresses action only when at or above target;
         # under-target always falls through to BUY logic.
         if current_position is None:
+            # Recent-buy guard: broker position may lag 1-2 bars after fill.
+            if (self._last_buy_bar is not None and
+                    self._bar_counter - self._last_buy_bar <= _BTC_UNCONFIRMED_BARS):
+                return BTCAction(
+                    action="HOLD",
+                    target_allocation_pct=target_allocation,
+                    size_usd=0.0,
+                    reason="recent_buy_unconfirmed",
+                    regime=regime,
+                    cycle_score=cycle_score,
+                    confidence=confidence,
+                )
+
             if current_allocation >= target_allocation:
                 excess = current_allocation - target_allocation
                 if excess <= BTC_REBALANCE_THRESHOLD:

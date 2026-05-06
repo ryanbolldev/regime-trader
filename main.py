@@ -132,6 +132,9 @@ class RegimeTrader:
         self._last_bar_data:    dict[str, dict]   = {}   # ticker → {regime, confidence, is_uncertain}
         self._regime_history:   dict[str, collections.deque] = {}  # ticker → rolling 20-bar window
 
+        # Persistent BTC strategy instance — tracks bar counter for unconfirmed-buy guard
+        self._btc_strategy: Optional[object] = None
+
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
@@ -409,6 +412,32 @@ class RegimeTrader:
             )
             return
 
+        # MSTR-BTC correlation guard: MSTR carries ~2.5× BTC beta; block new
+        # MSTR buys when combined effective BTC exposure already exceeds the cap.
+        if ticker.upper() == "MSTR":
+            try:
+                broker_positions = self._client.get_positions()
+                btc_val  = sum(
+                    float(p.market_value) for p in broker_positions
+                    if p.symbol.upper() in ("BTC/USD", "BTC", "BTCUSD")
+                )
+                mstr_val = sum(
+                    float(p.market_value) for p in broker_positions
+                    if p.symbol.upper() == "MSTR"
+                )
+                effective_btc = btc_val + mstr_val * settings.MSTR_BTC_BETA
+                if nav > 0 and effective_btc / nav > settings.BTC_MAX_ALLOCATION:
+                    log.info(
+                        "MSTR correlation_block: effective_btc=%.2f%% > cap=%.2f%%"
+                        " (btc=$%.0f mstr=$%.0f beta=%.1f)",
+                        effective_btc / nav * 100,
+                        settings.BTC_MAX_ALLOCATION * 100,
+                        btc_val, mstr_val, settings.MSTR_BTC_BETA,
+                    )
+                    return
+            except Exception as exc:
+                log.warning("MSTR correlation guard failed: %s", exc)
+
         # Execute order
         try:
             size = signal.position_size_usd * approval.size_multiplier
@@ -451,6 +480,9 @@ class RegimeTrader:
         """Run the BTC-specific cycle-aware strategy pipeline."""
         from core.btc_strategy import BTCPosition, BTCStrategy
         from core.cycle_engine import CycleEngine
+
+        if self._btc_strategy is None:
+            self._btc_strategy = BTCStrategy()
 
         try:
             current_price = float(ohlcv["close"].iloc[-1])
@@ -523,7 +555,7 @@ class RegimeTrader:
             0.8 if engine.is_confirmed() and not is_uncertain else 0.5
         )
 
-        strategy     = BTCStrategy()
+        strategy     = self._btc_strategy
         target_alloc = strategy.get_target_allocation(regime, cycle_signal, is_uncertain)
 
         log.info(
@@ -628,6 +660,8 @@ class RegimeTrader:
                 result = None
 
             if result is not None:
+                if action.action == "BUY":
+                    strategy.record_buy()
                 alerts.send_btc_trade_alert(
                     action,
                     regime_name=_REGIME_NAMES.get(regime, str(regime)),

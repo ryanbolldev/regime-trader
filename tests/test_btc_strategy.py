@@ -584,6 +584,21 @@ class TestCurrentAllocationGuard:
         action = self._call(current_allocation=0.0, target_allocation=0.05)
         assert action.action == "BUY"
 
+    def test_recent_buy_guard_does_not_fire_when_position_is_known(self):
+        # With a real position, the unconfirmed-buy guard must never suppress.
+        s = BTCStrategy()
+        s.record_buy()  # buy was "just placed"
+        action = s.get_action(
+            current_position   = _position(shares_held=0.1, current_price=50_000.0),
+            target_allocation  = 0.05,
+            portfolio_nav      = 100_000.0,
+            buying_power       = 100_000.0,
+            current_price      = 50_000.0,
+            current_allocation = 0.0,
+        )
+        # position is known → guard does not apply; should BUY or REDUCE/HOLD
+        assert action.action != "HOLD" or action.reason == "within_threshold"
+
     def test_exit_fires_before_guard_when_target_zero_and_position_held(self):
         # EXIT must still fire even when current_allocation >= target - threshold.
         # target=0.0, current_allocation=0.30 → guard: 0.30 >= 0.0 - 0.05 = -0.05 is True
@@ -601,3 +616,81 @@ class TestCurrentAllocationGuard:
         )
         assert action.action == "EXIT"
         assert action.reason == "target_allocation_zero"
+
+
+# ---------------------------------------------------------------------------
+# TestRecentBuyGuard
+# ---------------------------------------------------------------------------
+
+class TestRecentBuyGuard:
+    """Verify the unconfirmed-buy guard added to BTCStrategy.get_action()."""
+
+    NAV   = 100_000.0
+    PRICE = 50_000.0
+
+    def _call_no_position(self, strategy: BTCStrategy, target: float = 0.10) -> BTCAction:
+        return strategy.get_action(
+            current_position   = None,
+            target_allocation  = target,
+            portfolio_nav      = self.NAV,
+            buying_power       = self.NAV,
+            current_price      = self.PRICE,
+            current_allocation = 0.0,
+        )
+
+    def test_hold_immediately_after_buy(self):
+        s = BTCStrategy()
+        s.get_action(  # bar 1 — buy issued
+            current_position=None, target_allocation=0.10,
+            portfolio_nav=self.NAV, buying_power=self.NAV,
+            current_price=self.PRICE, current_allocation=0.0,
+        )
+        s.record_buy()
+        # bar 2 — broker hasn't confirmed yet
+        action = self._call_no_position(s)
+        assert action.action == "HOLD"
+        assert action.reason == "recent_buy_unconfirmed"
+
+    def test_hold_on_second_bar_after_buy(self):
+        s = BTCStrategy()
+        s.get_action(  # bar 1
+            current_position=None, target_allocation=0.10,
+            portfolio_nav=self.NAV, buying_power=self.NAV,
+            current_price=self.PRICE, current_allocation=0.0,
+        )
+        s.record_buy()
+        self._call_no_position(s)  # bar 2 — still guarded
+        action = self._call_no_position(s)  # bar 3 — still within 2-bar window
+        assert action.action == "HOLD"
+        assert action.reason == "recent_buy_unconfirmed"
+
+    def test_buy_resumes_after_guard_expires(self):
+        s = BTCStrategy()
+        s.get_action(  # bar 1
+            current_position=None, target_allocation=0.10,
+            portfolio_nav=self.NAV, buying_power=self.NAV,
+            current_price=self.PRICE, current_allocation=0.0,
+        )
+        s.record_buy()
+        self._call_no_position(s)  # bar 2 — guarded
+        self._call_no_position(s)  # bar 3 — guarded
+        action = self._call_no_position(s)  # bar 4 — guard expired
+        assert action.action == "BUY"
+
+    def test_guard_not_active_before_first_buy(self):
+        s = BTCStrategy()
+        action = self._call_no_position(s)
+        assert action.action == "BUY"
+
+    def test_guard_does_not_apply_when_position_known(self):
+        s = BTCStrategy()
+        s.record_buy()  # simulate buy placed this bar
+        action = s.get_action(
+            current_position   = _position(shares_held=0.2, current_price=self.PRICE),
+            target_allocation  = 0.10,
+            portfolio_nav      = self.NAV,
+            buying_power       = self.NAV,
+            current_price      = self.PRICE,
+            current_allocation = 0.0,  # will BUY since position known and drift > threshold
+        )
+        assert action.reason != "recent_buy_unconfirmed"

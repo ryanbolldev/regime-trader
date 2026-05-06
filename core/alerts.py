@@ -81,6 +81,8 @@ def _cooldown_for(event_type: str) -> int:
         return _overrides[event_type]
     try:
         from config import settings
+        if event_type in settings.ALERT_COOLDOWN_OVERRIDES:
+            return settings.ALERT_COOLDOWN_OVERRIDES[event_type]
         return settings.ALERT_COOLDOWN_SECONDS
     except Exception:
         return 300

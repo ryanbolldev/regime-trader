@@ -339,3 +339,46 @@ class TestSetCooldown:
             alerts_mod.send("shutdown", "a", "info")
             alerts_mod.send("shutdown", "b", "info")   # suppressed (default cooldown)
         assert mock_post.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# TestCooldownOverrides (settings-level zero-cooldown for critical events)
+# ---------------------------------------------------------------------------
+
+class TestCooldownOverrides:
+    def test_circuit_breaker_never_suppressed(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("circuit_breaker", "first",  "critical")
+            alerts_mod.send("circuit_breaker", "second", "critical")
+        assert mock_post.call_count == 2
+
+    def test_critical_error_never_suppressed(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("critical_error", "first",  "critical")
+            alerts_mod.send("critical_error", "second", "critical")
+        assert mock_post.call_count == 2
+
+    def test_lockfile_present_never_suppressed(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("lockfile_present", "first",  "critical")
+            alerts_mod.send("lockfile_present", "second", "critical")
+        assert mock_post.call_count == 2
+
+    def test_regular_event_still_suppressed_by_default_cooldown(self, monkeypatch):
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("regime_change", "first",  "info")
+            alerts_mod.send("regime_change", "second", "info")  # suppressed
+        assert mock_post.call_count == 1
+
+    def test_settings_override_independent_from_set_cooldown(self, monkeypatch):
+        """settings override fires unconditionally; set_cooldown() acts on different namespace."""
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        alerts_mod.set_cooldown("circuit_breaker", 9999)  # runtime override: should win over settings
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("circuit_breaker", "first",  "critical")
+            alerts_mod.send("circuit_breaker", "second", "critical")  # suppressed by 9999s runtime override
+        assert mock_post.call_count == 1

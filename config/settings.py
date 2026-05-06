@@ -90,6 +90,12 @@ ALPACA_BASE_URL = "https://paper-api.alpaca.markets"
 ALERT_EMAIL_RECIPIENTS = []
 ALERT_WEBHOOK_URL      = ""
 ALERT_COOLDOWN_SECONDS = 300
+ALERT_COOLDOWN_OVERRIDES: dict[str, int] = {
+    "circuit_breaker":  0,   # critical — never suppress
+    "critical_error":   0,   # critical — never suppress
+    "lockfile_written": 0,   # startup/shutdown lifecycle
+    "lockfile_present": 0,   # startup/shutdown lifecycle
+}
 
 # ---------------------------------------------------------------------------
 # On-chain data
@@ -134,6 +140,10 @@ BTC_TICKERS             = ["BTCUSD"]
 BTC_MAX_ALLOCATION      = 0.15
 BTC_REBALANCE_THRESHOLD = 0.05
 BTC_CYCLE_TIER_BOOST    = True
+
+# MSTR carries ~2.5× BTC beta; add (mstr_value × MSTR_BTC_BETA) to effective
+# BTC exposure before approving any new MSTR equity signal.
+MSTR_BTC_BETA = 2.5
 
 # ---------------------------------------------------------------------------
 # Wheel strategy

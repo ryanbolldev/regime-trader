@@ -944,3 +944,98 @@ class TestPositionCloseOnCrash:
         assert sell_size == pytest.approx(10_000.0)
         # Confirm it's a partial close (REDUCE), not EXIT
         assert reduce_action.action == "REDUCE"
+
+
+# ---------------------------------------------------------------------------
+# TestMSTRCorrelationGuard
+# ---------------------------------------------------------------------------
+
+class TestMSTRCorrelationGuard:
+    """MSTR orders blocked when effective BTC exposure (BTC + MSTR×beta) exceeds cap."""
+
+    def _mstr_pos(self, market_value: float) -> MagicMock:
+        p = MagicMock()
+        p.symbol       = "MSTR"
+        p.market_value = market_value
+        return p
+
+    def _btc_pos(self, market_value: float) -> MagicMock:
+        p = MagicMock()
+        p.symbol       = "BTCUSD"
+        p.market_value = market_value
+        return p
+
+    def test_mstr_blocked_when_combined_btc_exposure_exceeds_cap(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "MSTR_BTC_BETA", 2.5)
+        monkeypatch.setattr(s, "BTC_MAX_ALLOCATION", 0.15)
+        mock_client.is_market_open.return_value = True
+        # BTC $10k (10%) + MSTR $3k × 2.5 = $17.5k > $15k cap
+        mock_client.get_positions.return_value = [
+            self._btc_pos(10_000.0),
+            self._mstr_pos(3_000.0),
+        ]
+        mock_hmm.predict_current.return_value = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+
+        trader._process_ticker("MSTR")
+
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_mstr_allowed_when_effective_btc_within_cap(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "MSTR_BTC_BETA", 2.5)
+        monkeypatch.setattr(s, "BTC_MAX_ALLOCATION", 0.15)
+        mock_client.is_market_open.return_value = True
+        # BTC $5k (5%) only — effective_btc = $5k < $15k cap → allow
+        mock_client.get_positions.return_value = [self._btc_pos(5_000.0)]
+        mock_hmm.predict_current.return_value = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+
+        trader._process_ticker("MSTR")
+
+        patch_modules["oe"].submit.assert_called()
+
+    def test_mstr_blocked_even_with_no_direct_btc_if_mstr_alone_exceeds_cap(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "MSTR_BTC_BETA", 2.5)
+        monkeypatch.setattr(s, "BTC_MAX_ALLOCATION", 0.15)
+        mock_client.is_market_open.return_value = True
+        # No BTC; MSTR $7k × 2.5 = $17.5k > $15k cap
+        mock_client.get_positions.return_value = [self._mstr_pos(7_000.0)]
+        mock_hmm.predict_current.return_value = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+
+        trader._process_ticker("MSTR")
+
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_non_mstr_ticker_not_affected_by_guard(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "MSTR_BTC_BETA", 2.5)
+        monkeypatch.setattr(s, "BTC_MAX_ALLOCATION", 0.15)
+        mock_client.is_market_open.return_value = True
+        # High BTC exposure — but we're processing CVX, not MSTR
+        mock_client.get_positions.return_value = [self._btc_pos(20_000.0)]
+        mock_hmm.predict_current.return_value = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+
+        trader._process_ticker("CVX")
+
+        patch_modules["oe"].submit.assert_called()
