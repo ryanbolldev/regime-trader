@@ -345,9 +345,10 @@ class RegimeTrader:
         # Record per-bar state for dashboard writer
         _confidence = 0.8 if engine.is_confirmed() and not engine.is_uncertain() else 0.5
         self._last_bar_data[ticker] = {
-            "regime":       regime,
-            "confidence":   _confidence,
-            "is_uncertain": engine.is_uncertain(),
+            "regime":         regime,
+            "confidence":     _confidence,
+            "is_uncertain":   engine.is_uncertain(),
+            "is_model_stale": getattr(engine, "is_model_stale", False),
         }
         if ticker not in self._regime_history:
             self._regime_history[ticker] = collections.deque(maxlen=20)
@@ -751,11 +752,12 @@ class RegimeTrader:
             (t for t in settings.TICKERS if self._last_bar_data.get(t, {}).get("regime", -1) != -1),
             None,
         )
-        p_data      = self._last_bar_data.get(primary, {}) if primary else {}
-        regime_id   = p_data.get("regime",       -1)
-        confidence  = p_data.get("confidence",   1.0)
-        is_uncertain = p_data.get("is_uncertain", False)
-        regime_name = _REGIME_NAMES.get(regime_id, "unconfirmed")
+        p_data        = self._last_bar_data.get(primary, {}) if primary else {}
+        regime_id     = p_data.get("regime",          -1)
+        confidence    = p_data.get("confidence",      1.0)
+        is_uncertain  = p_data.get("is_uncertain",    False)
+        is_model_stale = p_data.get("is_model_stale", False)
+        regime_name   = _REGIME_NAMES.get(regime_id, "unconfirmed")
 
         # Flicker count: transitions in the rolling 20-bar regime window per ticker
         def _flicker(hist: collections.deque) -> int:
@@ -783,6 +785,7 @@ class RegimeTrader:
             "regime_name":      regime_name,
             "confidence":       confidence,
             "is_uncertain":     is_uncertain,
+            "is_model_stale":   is_model_stale,
             "is_confirmed":     regime_id != -1,
             "flicker_count":    flicker_count,
             "nav":              nav,

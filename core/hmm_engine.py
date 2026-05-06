@@ -101,6 +101,11 @@ class HMMEngine:
         self._recent_regimes: deque[int] = deque(maxlen=flicker_window)
         self._uncertain: bool = False
 
+        # Staleness detection: log-likelihood of training reference window
+        self._train_ll_mean: Optional[float] = None
+        self._train_ll_std:  Optional[float] = None
+        self._is_model_stale: bool = False
+
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
@@ -145,6 +150,18 @@ class HMMEngine:
         self._model   = best_model
         self._n_states = best_model.n_components
         log.info("HMM [%s] selected n_states=%d  BIC=%.2f", self.symbol, self._n_states, best_bic)
+
+        # Staleness reference: log-likelihood distribution from last 30 training bars.
+        # Future predictions < (mean - 2 std) of this window trigger is_model_stale.
+        X_ref = X[-30:] if len(X) >= 30 else X
+        ll_ref = _per_row_log_likelihood(best_model, X_ref)
+        self._train_ll_mean = float(np.mean(ll_ref))
+        self._train_ll_std  = float(np.std(ll_ref))
+        self._is_model_stale = False
+        log.debug(
+            "HMM [%s] staleness baseline: mean=%.3f std=%.3f (n=%d bars)",
+            self.symbol, self._train_ll_mean, self._train_ll_std, len(X_ref),
+        )
 
         # Build state → regime mapping sorted by mean return (first feature column)
         means = best_model.means_[:, 0]  # mean log-return per state
@@ -202,6 +219,24 @@ class HMMEngine:
                 self._recent_regimes, self.flicker_threshold
             )
 
+        # Staleness check: current observation's log-likelihood vs training distribution.
+        if self._train_ll_mean is not None:
+            current_ll = float(_per_row_log_likelihood(self._model, obs)[0])
+            std        = self._train_ll_std or 0.0
+            threshold  = self._train_ll_mean - 2.0 * std
+            if current_ll < threshold:
+                self._is_model_stale = True
+                self._uncertain      = True
+                log.warning(
+                    "HMM [%s] model may be stale: obs_ll=%.3f < threshold=%.3f "
+                    "(mean=%.3f std=%.3f)",
+                    self.symbol, current_ll, threshold,
+                    self._train_ll_mean, std,
+                )
+            else:
+                self._is_model_stale = False
+                # _uncertain may still be True from flicker filter; don't clear it here.
+
         return emitted
 
     def is_confirmed(self) -> bool:
@@ -209,8 +244,14 @@ class HMMEngine:
         return self._pending_count >= self.confirmation_bars
 
     def is_uncertain(self) -> bool:
-        """True when the flicker filter is active (reduce position sizing)."""
+        """True when the flicker filter is active or the model is stale."""
         return self._uncertain
+
+    @property
+    def is_model_stale(self) -> bool:
+        """True when the current observation's log-likelihood is > 2 std below
+        the training reference distribution (last 30 training bars)."""
+        return self._is_model_stale
 
     def regime_history(self) -> list[int]:
         """Return all regime labels emitted so far (one per predict_current call)."""
@@ -223,16 +264,33 @@ class HMMEngine:
         return f"state_{label}"
 
     def reset_filters(self) -> None:
-        """Reset confirmation gate and flicker filter (call after re-fit)."""
+        """Reset confirmation gate, flicker filter, and staleness flag (call after re-fit)."""
         self._pending_state   = None
         self._pending_count   = 0
         self._uncertain       = False
+        self._is_model_stale  = False
         self._recent_regimes.clear()
 
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _per_row_log_likelihood(model: GaussianHMM, X: np.ndarray) -> np.ndarray:
+    """Approximate marginal log-likelihood per observation row.
+
+    Uses logsumexp(log_emission[row] + log(startprob)) as a single-step
+    forward pass — consistent with _forward_decode's prior assumption.
+
+    Returns array of shape (n_samples,).
+    """
+    log_emissions = model._compute_log_likelihood(X)   # (n_samples, n_states)
+    log_prior     = np.log(model.startprob_ + 1e-300)
+    combined      = log_emissions + log_prior           # broadcast: (n_samples, n_states)
+    max_vals      = combined.max(axis=1, keepdims=True)
+    return (max_vals.squeeze(axis=1) +
+            np.log(np.sum(np.exp(combined - max_vals), axis=1)))
+
 
 def _bic(model: GaussianHMM, X: np.ndarray) -> float:
     """BIC = -2 * log-likelihood + k * log(n)."""

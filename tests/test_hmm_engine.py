@@ -415,3 +415,58 @@ class TestPerTickerSymbol:
         # engine_b's confirmation gate must remain independent
         assert engine_b._pending_count == 0
         assert engine_b._confirmed_regime is None
+
+
+# ---------------------------------------------------------------------------
+# HMM Staleness Detection
+# ---------------------------------------------------------------------------
+
+class TestModelStaleness:
+
+    def test_is_model_stale_false_after_fit(self):
+        engine, _ = _fitted_engine()
+        assert engine.is_model_stale is False
+
+    def test_is_model_stale_false_on_normal_observation(self):
+        engine, features = _fitted_engine()
+        clean = features.dropna()
+        # Normal in-distribution observation should not trigger stale flag
+        engine.predict_current(clean.iloc[-1])
+        assert engine.is_model_stale is False
+
+    def test_is_model_stale_true_on_extreme_observation(self):
+        """An observation far outside the training distribution triggers stale=True."""
+        engine, features = _fitted_engine()
+        # Create an extreme row: all values × 1000 → log-likelihood will be far below threshold
+        extreme_row = features.dropna().iloc[-1] * 1000.0
+        engine.predict_current(extreme_row)
+        assert engine.is_model_stale is True
+
+    def test_stale_observation_forces_uncertain(self):
+        """is_uncertain() must be True whenever is_model_stale is True."""
+        engine, features = _fitted_engine()
+        extreme_row = features.dropna().iloc[-1] * 1000.0
+        engine.predict_current(extreme_row)
+        assert engine.is_model_stale is True
+        assert engine.is_uncertain() is True
+
+    def test_staleness_clears_after_normal_observation(self):
+        """After a stale bar, a normal observation should clear the stale flag."""
+        engine, features = _fitted_engine()
+        clean = features.dropna()
+        engine.predict_current(clean.iloc[-1] * 1000.0)   # stale
+        assert engine.is_model_stale is True
+        engine.predict_current(clean.iloc[-1])             # normal
+        assert engine.is_model_stale is False
+
+    def test_train_ll_mean_and_std_set_after_fit(self):
+        engine, _ = _fitted_engine()
+        assert engine._train_ll_mean is not None
+        assert engine._train_ll_std  is not None
+
+    def test_reset_filters_clears_stale_flag(self):
+        engine, features = _fitted_engine()
+        engine.predict_current(features.dropna().iloc[-1] * 1000.0)
+        assert engine.is_model_stale is True
+        engine.reset_filters()
+        assert engine.is_model_stale is False
