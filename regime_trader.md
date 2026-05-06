@@ -25,10 +25,11 @@ This document is the authoritative technical reference for the Regime Trader sys
    - [Lockfile Guard](#lockfile-guard)
    - [Credential Security](#credential-security)
 7. [Order Execution](#order-execution)
-8. [Alerts & Monitoring](#alerts--monitoring)
-9. [Broker Integration](#broker-integration)
-10. [Anti-Lookahead-Bias Guarantees](#anti-lookahead-bias-guarantees)
-11. [Configuration Reference](#configuration-reference)
+8. [Real-Time Dashboard](#real-time-dashboard)
+9. [Alerts & Monitoring](#alerts--monitoring)
+10. [Broker Integration](#broker-integration)
+11. [Anti-Lookahead-Bias Guarantees](#anti-lookahead-bias-guarantees)
+12. [Configuration Reference](#configuration-reference)
 
 ---
 
@@ -93,43 +94,55 @@ _run_bar():
   2. For each ticker in settings.TICKERS:
        _process_ticker(ticker)
   3. risk_manager.update(current_nav) — evaluate circuit breakers post-bar
-  4. For each newly-fired breaker: fire circuit_breaker alert
+  4. For each newly-fired breaker:
+       a. Fire circuit_breaker alert
+       b. order_executor.cancel_all() — cancel every open order
+       c. close_position() for every open broker position — flatten all exposure
+  5. _write_dashboard_state() — atomic JSON write to logs/dashboard_state.json
 ```
 
 ### Per-ticker pipeline (`_process_ticker`)
 
 ```
-1. _fetch_bars_with_retry()     — up to 3 attempts, fires data_feed_drop alert on failure
-2. feature_engineering.compute_latest()
-3. hmm_engine.predict_current() → regime (-1 = unconfirmed, 0–4 = confirmed)
-4. If regime != prior: fire regime_change alert
-5. If regime == -1: return (no signal until confirmed)
-6. If ticker in REFERENCE_TICKERS: return (context only, no trade)
-7. If ticker == "BTC": → _process_btc() and return
-8. If IS_EQUITY_HOURS_ONLY and market closed: return
-9. If LIVE_ACCOUNT_MODE: return (equities disabled in live mode)
-10. regime_strategies.get_signal() → Signal
-11. risk_manager.approve(signal) → ApprovalResult
-12. If not approved: log and return
-13. order_executor.submit(signal, symbol=ticker)
-14. position_tracker.on_fill(result)
-15. Fire trade_placed alert
+1.  _fetch_bars_with_retry()      — up to 3 attempts; fires data_feed_drop alert on failure
+2.  feature_engineering.compute_latest()
+3.  hmm_engine.predict_current()  → regime (-1 = unconfirmed, 0–4 = confirmed)
+4.  If regime != prior: fire regime_change alert
+5.  Record per-bar state (regime, confidence, is_uncertain) for dashboard writer
+6.  If regime == -1: return (no signal until confirmed)
+7.  If ticker in REFERENCE_TICKERS: return (context only, no trade)
+8.  If ticker == "BTC": → _process_btc() and return
+9.  If IS_EQUITY_HOURS_ONLY and market closed: return
+10. If LIVE_ACCOUNT_MODE: log and return (equities disabled in live mode)
+11. If regime == 0 (crash): _maybe_close_on_crash(ticker) and return
+        — closes any existing long equity position; no new entries
+12. regime_strategies.get_signal() → Signal
+13. risk_manager.approve(signal) → ApprovalResult
+14. If not approved: log and return
+15. order_executor.submit(signal, symbol=ticker) → order_result
+16. If order_result is not None:
+        a. Fire trade_placed alert (symbol, side, size_usd, entry_price from fill)
+        b. position_tracker.on_fill(order_result)
+        c. Append to _recent_signals deque
 ```
 
 ### BTC pipeline (`_process_btc`)
 
 ```
-1. cycle_engine.get_cycle_signal(ohlcv) → CycleSignal
-2. Fetch NAV and buying_power from broker
-3. Resolve current BTC position from broker positions
-4. btc_strategy.get_target_allocation(regime, cycle_signal, is_uncertain)
-5. btc_strategy.get_action(position, target, nav, buying_power, price, ...)
-6. If action == HOLD: log and return
-7. [Live mode] Log full decision, check 30% deployed cap, cap size at 20% NAV
-8. Log "LIVE ACCOUNT: approving order for ..." (live mode only)
-9. order_executor.submit_crypto_order(symbol, side, notional_usd)
-10. alerts.send_btc_trade_alert()
-11. position_tracker.on_fill()
+1.  cycle_engine.get_cycle_signal(ohlcv) → CycleSignal
+2.  Fetch NAV and buying_power from broker
+3.  Resolve current BTC position from broker positions
+4.  btc_strategy.get_target_allocation(regime, cycle_signal, is_uncertain)
+5.  btc_strategy.get_action(position, target, nav, buying_power, price,
+        current_allocation=broker_reported_pct)
+6.  If action == HOLD: log and return
+7.  [Live mode] Log full decision; check 30% deployed cap; cap size at 20% NAV
+8.  Log "LIVE ACCOUNT: approving order for ..." (live mode only)
+9.  order_executor.submit_crypto_order(symbol, side, notional_usd) → result
+10. If result is not None:
+        a. alerts.send_btc_trade_alert(action, ..., order_result=result)
+        b. position_tracker.on_fill(result)
+        c. Append to _recent_signals deque
 ```
 
 ### Error handling
@@ -322,12 +335,12 @@ BTC uses a separate allocation table that is independently adjusted by the 60-da
 | Regime | Allocation | Rationale |
 |--------|------------|-----------|
 | 0 Crash | 0% | Never hold BTC in a crash — always 0 regardless of cycle |
-| 1 Bear | 25% | Light exposure; cycle may still produce tradeable lows |
-| 2 Neutral | 50% | Moderate; core holding |
-| 3 Bull | 75% | Near-maximum exposure |
-| 4 Euphoria | 40% | Trim back — euphoria encodes take-profit logic (lower than bull) |
+| 1 Bear | 5% | Minimal exposure; preserves optionality at cycle lows |
+| 2 Neutral | 10% | Moderate core holding |
+| 3 Bull | 15% | Near-maximum exposure |
+| 4 Euphoria | 8% | Trim back — euphoria encodes take-profit logic (lower than bull) |
 
-Note that Euphoria (40%) < Bull (75%) intentionally. A strong cycle signal in bull regime boosts to the Euphoria tier's *allocation* (40%), encoding "we are likely near a top."
+Note that Euphoria (8%) < Bull (15%) intentionally. A strong cycle signal in bull regime boosts to the Euphoria tier's *allocation* (8%), encoding "we are likely near a top."
 
 #### Cycle tier adjustments (`BTC_CYCLE_TIER_BOOST = True`)
 
@@ -338,17 +351,27 @@ If failed_cycle:        shift down one tier (regime - 1)
 If composite_score ≥ CYCLE_COMPOSITE_THRESHOLD (0.65):
                         shift up one tier (regime + 1)
 If is_uncertain:        × 0.50
-Cap at BTC_MAX_ALLOCATION (0.75)
+Cap at BTC_MAX_ALLOCATION (0.15)
 ```
 
 #### Rebalancing actions
 
-| Condition | Action |
-|-----------|--------|
-| `abs(target - current) ≤ BTC_REBALANCE_THRESHOLD (5%)` | HOLD |
-| `target == 0` and position held | EXIT |
-| `target > current` | BUY (`size = min(drift × nav, buying_power)`) |
-| `target < current` | REDUCE (`size = abs(drift) × nav`) |
+`get_action()` evaluates conditions in this order. `current_allocation` is the broker-reported fraction of NAV already in BTC (passed by the caller); `current_alloc` is the same value used to compute `drift`.
+
+| Priority | Condition | Action |
+|----------|-----------|--------|
+| 1 | `portfolio_nav == 0` | HOLD (`zero_nav`) |
+| 2 | `target == 0.0` and position is held | EXIT (sell full position value) |
+| 3 | Position unknown **and** `current_allocation ≥ target` **and** excess ≤ threshold | HOLD (`within_threshold`) |
+| 4 | Position unknown **and** `current_allocation ≥ target` **and** excess > threshold | REDUCE (`size = excess × nav`) |
+| 5 | Position unknown **and** `current_allocation < target` | falls through to BUY logic |
+| 6 | Position known **and** `abs(drift) ≤ BTC_REBALANCE_THRESHOLD (5%)` | HOLD (`within_threshold`) |
+| 7 | `drift > 0` (under target) | BUY (`size = min(drift × nav, buying_power)`) |
+| 8 | `drift < 0` (over target) | REDUCE (`size = abs(drift) × nav`) |
+
+**Guard asymmetry (priorities 3–5):** When the broker position lookup returns `None`, the guard only suppresses trading when at or above target. Under-target always falls through to BUY — there is intentionally no HOLD zone below the target when the position object is unavailable. This prevents the guard from blocking legitimate accumulation.
+
+**Broker-reported allocation:** The method uses the `current_allocation` kwarg directly for both the guard (priorities 3–5) and the drift calculation (priorities 6–8). It no longer recalculates from `shares_held × current_price / nav`. This ensures the strategy uses Alpaca's own portfolio value, preventing divergence from broker-reported figures. `current_price` remains in the signature for API compatibility.
 
 #### BTCAction fields
 
@@ -563,6 +586,40 @@ On any exception from `submit_order_notional`, the error is logged with full con
 
 ---
 
+## Real-Time Dashboard
+
+**Files:** `dashboard/app.py`, `main.py` (`_write_dashboard_state`)
+
+A Streamlit dashboard provides a live read-only view of the running system. It reads shared state written by the main process — there is no direct connection to the broker or the trading loop.
+
+### State file
+
+After every `_run_bar()` call, `_write_dashboard_state()` serialises the current system snapshot to `logs/dashboard_state.json` using an atomic write (`*.tmp` → `replace()`). The dashboard reads this file on each refresh; if the file is absent or unreadable, it falls back to default placeholder values so the UI remains usable while the system is offline.
+
+**Fields written:**
+
+| Field | Source |
+|-------|--------|
+| `regime_name`, `regime_id` | Primary confirmed ticker from `_last_bar_data` |
+| `is_confirmed`, `is_uncertain`, `confidence` | HMM engine flags |
+| `flicker_count` | Sum of regime transitions across all tickers in the 20-bar rolling window |
+| `nav`, `daily_pnl`, `daily_pnl_pct` | `position_tracker.get_nav()` / `get_daily_pnl()` |
+| `drawdown_pct`, `daily_drawdown`, `weekly_drawdown` | `risk_manager.get_drawdown_state()` |
+| `circuit_breakers` | Names of currently active breakers |
+| `positions` | Broker positions (symbol, qty, market_value, unrealised P&L, side) |
+| `signals` | Last 50 entries from `_recent_signals` deque |
+| `last_updated` | UTC ISO timestamp |
+
+### Running the dashboard
+
+```
+streamlit run dashboard/app.py --server.port 8501
+```
+
+The app auto-refreshes every 30 seconds via `time.sleep(30); st.rerun()` — no external dependency required. The lockfile banner displays at the top of the page whenever `trading.lock` is present.
+
+---
+
 ## Alerts & Monitoring
 
 **File:** `core/alerts.py`
@@ -573,7 +630,34 @@ Alerts are dispatched to all configured channels simultaneously (webhook + email
 
 Each `(event_type, symbol)` pair has an independent cooldown bucket (default `ALERT_COOLDOWN_SECONDS = 300`). An alert is suppressed if the same event was sent for the same symbol within the cooldown window. Per-symbol cooldowns allow "BTC regime change" and "SPY regime change" to fire independently without mutual suppression.
 
+`TRADE_PLACED` alerts pass `symbol=ticker` explicitly, so each equity ticker maintains its own cooldown bucket. BTC alerts pass `symbol="BTC"`.
+
 Override example: `alerts.set_cooldown("circuit_breaker", 0)` — used in tests to disable cooldown.
+
+### Webhook payload structure
+
+Every call to `alerts.send()` POSTs the following JSON to `ALERT_WEBHOOK_URL`:
+
+```json
+{
+  "event":     "TRADE_PLACED",
+  "message":   "Trade placed: SPY  side=buy  size=$1000.00  regime=bull",
+  "regime":    null,
+  "timestamp": "2025-01-15T14:32:00+00:00",
+  "data": {
+    "severity":    "info",
+    "raw_event":   "trade_placed",
+    "symbol":      "SPY",
+    "side":        "buy",
+    "size_usd":    1000.0,
+    "entry_price": 452.10
+  }
+}
+```
+
+`symbol`, `side`, `size_usd`, and `entry_price` are populated for `TRADE_PLACED` and `BTC_TRADE` events. They are `null` for all other event types. `entry_price` is the `filled_avg_price` from the Alpaca `OrderResult`; it may be `null` for orders not yet filled at submission time.
+
+**`TRADE_PLACED` and `BTC_TRADE` only fire when `order_result is not None`** — orders that are suppressed by deduplication, zero size, or other pre-flight guards do not generate notifications.
 
 ### Event catalogue
 
@@ -582,8 +666,8 @@ Override example: `alerts.set_cooldown("circuit_breaker", 0)` — used in tests 
 | `STARTUP` | info | Bot started, includes NAV and market status |
 | `SHUTDOWN` | info | Bot stopped, includes reason |
 | `REGIME_CHANGE` | info | HMM confirmed regime transition |
-| `TRADE_PLACED` | info | Equity or wheel order submitted |
-| `BTC_TRADE` | info | BTC spot order (buy/sell/reduce/exit) |
+| `TRADE_PLACED` | info | Equity order confirmed by broker (not fired on suppressed orders) |
+| `BTC_TRADE` | info | BTC spot order confirmed by broker (buy/sell/reduce/exit) |
 | `CYCLE_SIGNAL` | info/critical | Cycle composite threshold crossed or failed cycle |
 | `CIRCUIT_BREAKER` | warning | Any circuit breaker fired |
 | `DAILY_PNL` | info | End-of-day unrealised P&L summary |
@@ -721,7 +805,7 @@ All parameters live in `config/settings.py`. Never put credentials here.
 | `CYCLE_DONCHIAN_WEIGHT` | 0.40 | Donchian weight in price confirmation |
 | `CYCLE_GAUSSIAN_WEIGHT` | 0.35 | Gaussian MA weight |
 | `CYCLE_BOLLINGER_WEIGHT` | 0.25 | Bollinger band weight |
-| `BTC_MAX_ALLOCATION` | 0.75 | Hard allocation ceiling |
+| `BTC_MAX_ALLOCATION` | 0.15 | Hard allocation ceiling |
 | `BTC_REBALANCE_THRESHOLD` | 0.05 | Min drift before rebalancing |
 | `BTC_CYCLE_TIER_BOOST` | True | Enable cycle-driven tier adjustments |
 
