@@ -382,3 +382,60 @@ class TestRiskManagerCircuitBreakers:
         bm1   = _benchmark_random(close, 100_000.0, seed=42)
         bm2   = _benchmark_random(close, 100_000.0, seed=42)
         pd.testing.assert_series_equal(bm1, bm2)
+
+
+# ---------------------------------------------------------------------------
+# Slippage (SLIPPAGE_BPS / CRYPTO_SLIPPAGE_BPS) and commission_usd
+# ---------------------------------------------------------------------------
+
+class TestSlippage:
+
+    @pytest.fixture
+    def fold_inputs(self):
+        ohlcv  = _make_ohlcv(500)
+        return ohlcv.iloc[:252], ohlcv.iloc[252:378]
+
+    def test_trade_has_commission_usd_field(self, fold_inputs):
+        is_df, oos_df = fold_inputs
+        result = Backtester().run_fold(is_df, oos_df, audit_lookahead=False)
+        for t in result.trades:
+            assert hasattr(t, "commission_usd"), "Trade missing commission_usd"
+
+    def test_commission_usd_non_negative(self, fold_inputs):
+        is_df, oos_df = fold_inputs
+        result = Backtester().run_fold(is_df, oos_df, audit_lookahead=False)
+        for t in result.trades:
+            assert t.commission_usd >= 0.0
+
+    def test_zero_slippage_yields_higher_nav_than_nonzero(self, monkeypatch):
+        """_simulate_equity with 0 bps must end higher than with high bps."""
+        from core.backtester import _simulate_equity
+        import core.backtester as bt_mod
+
+        # Deterministic price/alloc: allocation flips repeatedly → lots of commission
+        idx   = pd.bdate_range("2023-01-02", periods=6)
+        close = pd.Series([100.0, 102.0, 101.0, 103.0, 102.0, 104.0], index=idx)
+        alloc = pd.Series([0.0,   1.0,   0.0,   1.0,   0.0,   1.0],   index=idx)
+
+        monkeypatch.setattr(bt_mod, "SLIPPAGE_BPS", 0)
+        nav_zero = _simulate_equity(close, alloc, 100_000.0)
+
+        monkeypatch.setattr(bt_mod, "SLIPPAGE_BPS", 100)
+        nav_high = _simulate_equity(close, alloc, 100_000.0)
+
+        assert nav_zero.iloc[-1] > nav_high.iloc[-1]
+
+    def test_slippage_bps_in_settings(self):
+        from config.settings import SLIPPAGE_BPS, CRYPTO_SLIPPAGE_BPS
+        assert SLIPPAGE_BPS == 5
+        assert CRYPTO_SLIPPAGE_BPS == 10
+        assert CRYPTO_SLIPPAGE_BPS > SLIPPAGE_BPS
+
+    def test_commission_zero_when_allocation_unchanged(self, fold_inputs):
+        """When the strategy holds the same allocation, no commission is charged."""
+        is_df, oos_df = fold_inputs
+        result = Backtester().run_fold(is_df, oos_df, audit_lookahead=False)
+        # Bars where commission_usd == 0 should exist (allocation not changing every bar)
+        zero_comm = [t for t in result.trades if t.commission_usd == 0.0]
+        all_comm  = result.trades
+        assert len(zero_comm) > 0 or len(all_comm) == 0  # at least some zero-commission bars

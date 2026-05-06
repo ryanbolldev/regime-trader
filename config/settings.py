@@ -66,6 +66,10 @@ BACKTEST_IN_SAMPLE_BARS  = 252
 BACKTEST_OUT_SAMPLE_BARS = 126
 BACKTEST_STEP_BARS       = 63   # quarterly re-training step
 
+# Slippage in basis points (applied once per side of a trade).
+SLIPPAGE_BPS        = 5    # 0.05 % — equity and general assets
+CRYPTO_SLIPPAGE_BPS = 10   # 0.10 % — crypto (wider spreads, 24/7 markets)
+
 # ---------------------------------------------------------------------------
 # Bar resolution
 # ---------------------------------------------------------------------------

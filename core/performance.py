@@ -45,11 +45,12 @@ CONFIDENCE_MEDIUM_FLOOR = 0.40
 @dataclass
 class Trade:
     """One tradeable bar — a bar where the portfolio had nonzero allocation."""
-    timestamp:   pd.Timestamp
-    regime:      int
-    confidence:  float
-    pnl:         float     # dollar P&L this bar
-    return_pct:  float     # portfolio return this bar (alloc × price_return)
+    timestamp:      pd.Timestamp
+    regime:         int
+    confidence:     float
+    pnl:            float     # dollar P&L this bar
+    return_pct:     float     # portfolio return this bar (alloc × price_return)
+    commission_usd: float = 0.0  # slippage cost charged this bar
 
 
 @dataclass

@@ -46,6 +46,7 @@ from config.settings import (
     BACKTEST_IN_SAMPLE_BARS,
     BACKTEST_OUT_SAMPLE_BARS,
     BACKTEST_STEP_BARS,
+    SLIPPAGE_BPS,
 )
 from core.feature_engineering import compute, validate_no_lookahead
 from core.hmm_engine import HMMEngine
@@ -61,7 +62,6 @@ from core.risk_manager import RiskManager
 log = logging.getLogger(__name__)
 
 INITIAL_NAV = 100_000.0
-SLIPPAGE    = 0.0005    # 0.05 % per side (entry + exit = 0.10 % round-trip)
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +256,12 @@ class Backtester:
                 if approval.approved else 0.0
             )
 
-            # Simulate fill for this bar
-            alloc_change = target_alloc - allocation
-            trade_cost   = abs(alloc_change) * nav * SLIPPAGE * 2  # round-trip
-            port_return  = bar_return * allocation
-            new_nav      = (nav - trade_cost) * (1.0 + port_return)
+            # Simulate fill for this bar.
+            # Slippage is applied once per side: fill_price = close × (1 + bps/10000 × side_sign)
+            alloc_change   = target_alloc - allocation
+            commission_usd = abs(alloc_change) * nav * SLIPPAGE_BPS / 10_000.0
+            port_return    = bar_return * allocation
+            new_nav        = (nav - commission_usd) * (1.0 + port_return)
 
             if allocation > 0.0:
                 trades.append(Trade(
@@ -269,6 +270,7 @@ class Backtester:
                     confidence=confidence,
                     pnl=new_nav - nav,
                     return_pct=port_return,
+                    commission_usd=commission_usd,
                 ))
 
             regime_log.append(RegimeLogEntry(
@@ -443,7 +445,7 @@ def _simulate_equity(
     for i in range(1, len(price)):
         old_a  = allocs[i - 1]
         new_a  = allocs[i]
-        cost   = abs(new_a - old_a) * nav_arr[i - 1] * SLIPPAGE * 2
+        cost   = abs(new_a - old_a) * nav_arr[i - 1] * SLIPPAGE_BPS / 10_000.0
         ret    = returns[i] * new_a
         nav_arr[i] = (nav_arr[i - 1] - cost) * (1.0 + ret)
     return pd.Series(nav_arr, index=price.index)
