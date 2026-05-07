@@ -54,7 +54,10 @@
       "Bash(python -m pytest tests/ -q --tb=short)",
       "Bash(python -m pytest tests/test_hmm_engine.py::TestModelStaleness::test_is_model_stale_false_on_normal_observation tests/test_hmm_engine.py::TestModelStaleness::test_staleness_clears_after_normal_observation -v --tb=long)",
       "Bash(python -m pytest tests/test_hmm_engine.py::TestModelStaleness -v --tb=short)",
-      "Bash(python -m pytest tests/test_wheel_strategy.py::TestIVRankGate -v --tb=short)"
+      "Bash(python -m pytest tests/test_wheel_strategy.py::TestIVRankGate -v --tb=short)",
+      "Bash(python -m pytest tests/test_lag_analysis.py -v --tb=short)",
+      "Bash(grep -E \"^=|^Total|^Crash|^Mean|^Worst|^By|^  [0-9]|^======|^$\")",
+      "Bash(python -W ignore -c ' *)"
     ]
   }
 }
