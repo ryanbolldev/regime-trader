@@ -43,7 +43,18 @@
       "Bash(python -m pytest tests/ -x -q)",
       "Bash(python -c \"import sys; sys.path.insert\\(0, 'c:/Users/bollr/regime_trader'\\); from config import settings; attrs = ['BTC_MAX_ALLOCATION','BTC_REBALANCE_THRESHOLD','BTC_CYCLE_TIER_BOOST','CYCLE_COMPOSITE_THRESHOLD','PER_TRADE_RISK_CAP','INTRADAY_STOP_WARN','INTRADAY_STOP_HALT','WEEKLY_STOP','PEAK_DRAWDOWN_LOCKOUT','LIVE_INTRADAY_STOP_HALT','LIVE_WEEKLY_STOP','LIVE_PEAK_DRAWDOWN_LOCKOUT','LIVE_MAX_POSITION_PCT','LIVE_MAX_DEPLOYED_PCT','LIVE_ACCOUNT_MODE','ALERT_COOLDOWN_SECONDS','BAR_INTERVAL_SECS']; [print\\(f'{a} = {getattr\\(settings, a\\)}'\\) for a in attrs]\")",
       "Bash(python -c \"import sys; sys.path.insert\\(0, 'c:/Users/bollr/regime_trader'\\); from config import settings; attrs = ['TICKERS','REFERENCE_TICKERS','BTC_TICKERS','WHEEL_TICKERS','HMM_MIN_STATES','HMM_MAX_STATES','HMM_TRAIN_BARS','CONFIRMATION_BARS','FLICKER_WINDOW','FLICKER_THRESHOLD','UNCERTAINTY_ALLOCATION_FACTOR','MAX_POSITIONS','IS_EQUITY_HOURS_ONLY']; [print\\(f'{a} = {getattr\\(settings, a\\)}'\\) for a in attrs]\")",
-      "Bash(python -c \"import sys; sys.path.insert\\(0, 'c:/Users/bollr/regime_trader'\\); from core.btc_strategy import BTCStrategy; allocs = BTCStrategy.REGIME_ALLOCATIONS; [print\\(f'  {k}: {v}'\\) for k,v in allocs.items\\(\\)]\")"
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'c:/Users/bollr/regime_trader'\\); from core.btc_strategy import BTCStrategy; allocs = BTCStrategy.REGIME_ALLOCATIONS; [print\\(f'  {k}: {v}'\\) for k,v in allocs.items\\(\\)]\")",
+      "Bash(python -m pytest tests/test_alerts.py tests/test_btc_strategy.py tests/test_main.py -x -q)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python -m pytest tests/test_backtester.py -x -q)",
+      "Bash(python -m pytest tests/test_hmm_engine.py -x -q)",
+      "Bash(python -m pytest tests/test_alerts.py tests/test_btc_strategy.py tests/test_hmm_engine.py -x -q)",
+      "Bash(python -m pytest tests/test_hmm_engine.py::TestHMMConvergence -v)",
+      "Bash(python -m pytest tests/ -q --tb=short)",
+      "Bash(python -m pytest tests/test_hmm_engine.py::TestModelStaleness::test_is_model_stale_false_on_normal_observation tests/test_hmm_engine.py::TestModelStaleness::test_staleness_clears_after_normal_observation -v --tb=long)",
+      "Bash(python -m pytest tests/test_hmm_engine.py::TestModelStaleness -v --tb=short)",
+      "Bash(python -m pytest tests/test_wheel_strategy.py::TestIVRankGate -v --tb=short)"
     ]
   }
 }
