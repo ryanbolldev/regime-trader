@@ -139,9 +139,21 @@ def main() -> None:
         "date":          datetime.date.today().isoformat(),
     }
 
-    # ── 7. Report ──────────────────────────────────────────────────────
+    # ── 7. Aggregate exclusion counts ─────────────────────────────────
+    exclusion_counts: dict[str, int] = dict(universe_mgr.exclusion_counts)
+    for r in results:
+        if r.fit_failed:
+            key = "rate_limit_exhausted" if r.error_message == "rate_limit_exhausted" else "fit_failed"
+            exclusion_counts[key] = exclusion_counts.get(key, 0) + 1
+    exclusion_counts["low_liquidity_options"] = sum(
+        1 for r in results if r.low_liquidity_options
+    )
+
+    # ── 8. Report ──────────────────────────────────────────────────────
     reporter = Reporter()
-    json_path, md_path = reporter.write(scored, metadata, scorer.last_distribution)
+    json_path, md_path = reporter.write(
+        scored, metadata, scorer.last_distribution, exclusion_counts
+    )
     reporter.send_alert(scored, metadata)
 
     # ── Stdout summary ─────────────────────────────────────────────────
