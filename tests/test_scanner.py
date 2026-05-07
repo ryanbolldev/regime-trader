@@ -13,6 +13,7 @@ Unit tests for the nightly HMM scanner pipeline:
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -440,3 +441,66 @@ class TestScoreDistribution:
         assert dist["long"]["total"]  == 0
         assert dist["short"]["total"] == 0
         assert set(dist["long"]["buckets"].keys()) == {"0-20", "20-40", "40-60", "60-80", "80-100"}
+
+
+# ---------------------------------------------------------------------------
+# 8. Rate-limit resilience in BatchTrainer
+# ---------------------------------------------------------------------------
+
+class TestBatchTrainerRateLimits:
+
+    def test_batch_trainer_respects_max_workers(self):
+        """ThreadPoolExecutor is initialised with the configured max_workers."""
+        captured = {}
+
+        original_init = ThreadPoolExecutor.__init__
+
+        def recording_init(self_ex, *args, **kwargs):
+            captured["max_workers"] = kwargs.get("max_workers", args[0] if args else None)
+            original_init(self_ex, *args, **kwargs)
+
+        with patch(
+            "core.scanner.batch_trainer.ThreadPoolExecutor.__init__",
+            recording_init,
+        ):
+            trainer = BatchTrainer(max_workers=5, train_bars=252)
+            ohlcv   = {"SPY": _make_ohlcv(300)}
+            trainer.run(["SPY"], ohlcv)
+
+        assert captured.get("max_workers") == 5
+
+    def test_batch_trainer_retries_on_rate_limit(self):
+        """Ticker that raises RateLimitError on first attempt succeeds on retry."""
+        from broker.alpaca_client import RateLimitError
+
+        call_counts: dict[str, int] = {}
+        original_train = BatchTrainer._train_one
+
+        def flaky_train(self, ticker, df):
+            call_counts[ticker] = call_counts.get(ticker, 0) + 1
+            if call_counts[ticker] == 1:
+                raise RateLimitError("429 simulated")
+            return original_train(self, ticker, df)
+
+        with patch.object(BatchTrainer, "_train_one", flaky_train):
+            trainer = BatchTrainer(max_workers=1, max_retries=3, batch_sleep=0)
+            results = trainer.run(["SPY"], {"SPY": _make_ohlcv(300)})
+
+        assert len(results) == 1
+        assert results[0].fit_failed is False, "ticker should succeed after one retry"
+        assert trainer.total_retries >= 1
+
+    def test_batch_trainer_excludes_after_max_retries(self):
+        """Ticker that always raises RateLimitError is excluded with rate_limit_exhausted."""
+        from broker.alpaca_client import RateLimitError
+
+        def always_429(self, ticker, df):
+            raise RateLimitError("429 always")
+
+        with patch.object(BatchTrainer, "_train_one", always_429):
+            trainer = BatchTrainer(max_workers=1, max_retries=3, batch_sleep=0)
+            results = trainer.run(["DEAD"], {"DEAD": _make_ohlcv(300)})
+
+        assert len(results) == 1
+        assert results[0].fit_failed is True
+        assert results[0].error_message == "rate_limit_exhausted"

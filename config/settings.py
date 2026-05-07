@@ -154,6 +154,62 @@ BTC_CYCLE_TIER_BOOST    = True
 MSTR_BTC_BETA = 2.5
 
 # ---------------------------------------------------------------------------
+# Scanner
+# ---------------------------------------------------------------------------
+SCANNER_MIN_VOLUME          = 1_000_000   # avg daily volume filter
+SCANNER_MIN_PRICE           = 10.0        # price per share filter
+SCANNER_EARNINGS_BUFFER_DAYS = 7          # skip tickers within N days of earnings
+SCANNER_MAX_WORKERS         = 5           # ThreadPoolExecutor parallelism (rate-limit safe)
+SCANNER_BATCH_SLEEP_SECS    = 0.5         # sleep between worker batches to throttle API calls
+SCANNER_MAX_RETRIES         = 3           # per-ticker retries on HTTP 429 before exclusion
+SCANNER_SCORE_THRESHOLD     = 60          # minimum composite score to include
+SCANNER_TRAIN_BARS          = 252         # bars used to fit HMM per ticker
+SCANNER_OPTIONS_SPREAD_MAX  = 0.20        # max ATM bid-ask spread ($) for liquidity
+SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first deployment
+
+# S&P 500 + Nasdaq 100 combined universe (~200 most liquid tickers)
+SP500_NASDAQ100_UNIVERSE: list[str] = [
+    # Mega-cap tech / growth
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO",
+    "ADBE", "CRM", "NFLX", "INTU", "NOW", "PANW", "CRWD", "FTNT",
+    # Semiconductors
+    "AMD", "INTC", "QCOM", "TXN", "MU", "LRCX", "KLAC", "AMAT", "ADI",
+    "MRVL", "CDNS", "SNPS", "ON", "MCHP",
+    # Financials
+    "JPM", "BAC", "GS", "MS", "WFC", "C", "BLK", "SPGI", "MCO", "AXP",
+    "V", "MA", "PYPL", "FI", "COF", "USB", "PNC", "TFC",
+    # Healthcare / biotech
+    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "BMY",
+    "AMGN", "GILD", "VRTX", "REGN", "ISRG", "IDXX", "DXCM", "MRNA",
+    "ELV", "HUM", "CI", "CVS", "SYK", "BSX", "MDT", "ZBH",
+    # Consumer staples
+    "PEP", "KO", "WMT", "COST", "PG", "MDLZ", "KHC", "MNST", "CL",
+    "GIS", "K", "CAG", "MKC", "CHD", "CLX",
+    # Consumer discretionary
+    "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "TJX", "ROST", "DLTR",
+    "ORLY", "AZO", "EBAY", "BKNG", "ABNB", "MAR", "HLT",
+    # Industrials
+    "RTX", "HON", "CAT", "DE", "GE", "MMM", "ETN", "PH", "EMR", "ITW",
+    "GD", "LMT", "NOC", "BA", "UNP", "CSX", "NSC", "FDX", "UPS",
+    "CTAS", "FAST", "PAYX", "VRSK", "ODFL", "PCAR",
+    # Energy
+    "XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "DVN",
+    "FANG", "OXY", "HAL", "BKR",
+    # Utilities / Real estate
+    "NEE", "SO", "DUK", "D", "AEP", "EXC", "PLD", "AMT", "CCI", "EQIX",
+    # Communication
+    "T", "VZ", "CMCSA", "DIS", "CHTR", "TMUS", "NFLX",
+    # Materials
+    "LIN", "APD", "SHW", "FCX", "NEM", "ALB", "CE",
+    # Insurance / diversified
+    "CB", "MMC", "AON", "AIG", "PRU", "MET", "AFL", "ALL",
+    # Software / cloud
+    "WDAY", "ZS", "OKTA", "DDOG", "ZM", "SNOW", "PLTR", "RBLX",
+    # Other large-cap
+    "IBM", "ORCL", "SAP", "ACN", "TDG", "ROP", "ANSS", "IDXX",
+]
+
+# ---------------------------------------------------------------------------
 # Wheel strategy
 # ---------------------------------------------------------------------------
 WHEEL_TICKERS               = ["MSTR", "CVX"]

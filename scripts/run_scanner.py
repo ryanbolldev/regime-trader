@@ -150,7 +150,11 @@ def main() -> None:
     print()
     print("=" * 60)
     print(f"SCANNER COMPLETE  [{runtime}s]")
-    print(f"Universe: {len(tickers)} | Trained: {metadata['trained']} | Qualified: {len(scored)}")
+    retries = trainer.total_retries
+    print(
+        f"Universe: {len(tickers)} | Trained: {metadata['trained']} | "
+        f"Qualified: {len(scored)} | Rate-limit retries: {retries}"
+    )
     print(f"LONG: {len(longs)}  SHORT: {len(shorts)}")
     print()
 
