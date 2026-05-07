@@ -32,7 +32,9 @@ REFERENCE_TICKERS = ["SPY"]   # run HMM for regime context but never trade
 HMM_MIN_STATES = 3
 HMM_MAX_STATES = 7
 HMM_COVARIANCE_TYPE = "full"
-HMM_N_ITER = 100
+HMM_N_ITER  = 500             # max EM iterations per candidate model
+HMM_TOL     = 1e-5            # EM convergence tolerance (log-likelihood improvement)
+HMM_N_INIT  = 5               # random restarts per candidate state count; best BIC wins
 HMM_TRAIN_BARS = 504          # ~2 years of daily bars
 
 # ---------------------------------------------------------------------------

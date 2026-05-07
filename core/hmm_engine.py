@@ -57,7 +57,9 @@ from config.settings import (
     HMM_COVARIANCE_TYPE,
     HMM_MAX_STATES,
     HMM_MIN_STATES,
+    HMM_N_INIT,
     HMM_N_ITER,
+    HMM_TOL,
     HMM_TRAIN_BARS,
 )
 
@@ -128,28 +130,57 @@ class HMMEngine:
         best_model, best_bic = None, np.inf
 
         for n in range(HMM_MIN_STATES, HMM_MAX_STATES + 1):
-            try:
-                model = GaussianHMM(
-                    n_components=n,
-                    covariance_type=HMM_COVARIANCE_TYPE,
-                    n_iter=HMM_N_ITER,
-                    random_state=42,
-                )
-                model.fit(X)
-                bic = _bic(model, X)
-                log.debug("HMM [%s] n_states=%d  BIC=%.2f", self.symbol, n, bic)
-                if bic < best_bic:
-                    best_bic   = bic
-                    best_model = model
-            except Exception as exc:  # noqa: BLE001
-                log.warning("HMM [%s] fit failed for n_states=%d: %s", self.symbol, n, exc)
+            for seed_offset in range(HMM_N_INIT):
+                try:
+                    model = GaussianHMM(
+                        n_components=n,
+                        covariance_type=HMM_COVARIANCE_TYPE,
+                        n_iter=HMM_N_ITER,
+                        tol=HMM_TOL,
+                        random_state=42 + seed_offset,
+                    )
+                    model.fit(X)
+                    bic = _bic(model, X)
+
+                    monitor   = getattr(model, "monitor_", None)
+                    history   = getattr(monitor, "history",   [])
+                    converged = getattr(monitor, "converged", None)
+                    ll_delta  = (
+                        abs(history[-1] - history[-2])
+                        if len(history) >= 2 else float("inf")
+                    )
+                    log.debug(
+                        "HMM [%s] n_states=%d  seed=%d  BIC=%.2f  "
+                        "ll_delta=%.2e  converged=%s  iters=%d/%d",
+                        self.symbol, n, 42 + seed_offset, bic,
+                        ll_delta, converged, len(history), HMM_N_ITER,
+                    )
+
+                    if bic < best_bic:
+                        best_bic   = bic
+                        best_model = model
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "HMM [%s] fit failed for n_states=%d seed=%d: %s",
+                        self.symbol, n, 42 + seed_offset, exc,
+                    )
 
         if best_model is None:
             raise RuntimeError("All HMM candidate fits failed.")
 
-        self._model   = best_model
+        self._model    = best_model
         self._n_states = best_model.n_components
-        log.info("HMM [%s] selected n_states=%d  BIC=%.2f", self.symbol, self._n_states, best_bic)
+
+        _mon      = getattr(best_model, "monitor_", None)
+        _hist     = getattr(_mon, "history",   [])
+        _conv     = getattr(_mon, "converged", None)
+        _ll_delta = abs(_hist[-1] - _hist[-2]) if len(_hist) >= 2 else float("inf")
+        log.info(
+            "HMM [%s] selected n_states=%d  BIC=%.2f  "
+            "final_ll_delta=%.2e  converged=%s  iters=%d/%d",
+            self.symbol, self._n_states, best_bic,
+            _ll_delta, _conv, len(_hist), HMM_N_ITER,
+        )
 
         # Staleness reference: log-likelihood distribution from last 30 training bars.
         # Future predictions < (mean - 2 std) of this window trigger is_model_stale.
