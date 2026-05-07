@@ -272,7 +272,7 @@ def print_lag_summary(report: dict) -> None:
             parts = key.split("_to_")
             fr, to = parts[0], parts[1]
             lines.append(
-                f"  {fr}→{to}: {data['count']} events | "
+                f"  {fr}->{to}: {data['count']} events | "
                 f"mean lag {data['mean_lag_bars']:.1f} bars | "
                 f"mean damage {data['mean_damage_pct']:.1f}%"
             )
