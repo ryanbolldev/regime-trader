@@ -36,7 +36,8 @@ Public interface:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import pathlib
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import numpy as np
@@ -46,8 +47,18 @@ from config.settings import (
     BACKTEST_IN_SAMPLE_BARS,
     BACKTEST_OUT_SAMPLE_BARS,
     BACKTEST_STEP_BARS,
+    BAR_INTERVAL_SECS,
     SLIPPAGE_BPS,
 )
+from core.lag_analysis import (
+    LagTransition,
+    build_lag_report,
+    compute_lag_transitions,
+    print_lag_summary,
+    write_lag_report,
+)
+
+LOGS_DIR = pathlib.Path("logs")
 from core.feature_engineering import compute, validate_no_lookahead
 from core.hmm_engine import HMMEngine
 from core.performance import (
@@ -81,6 +92,7 @@ class FoldResult:
     benchmark_curves: dict[str, pd.Series]
     regime_distribution: dict[int, int]   # regime → bar count
     n_hmm_states:    int
+    lag_transitions: list[LagTransition] = field(default_factory=list)
 
 
 @dataclass
@@ -114,6 +126,7 @@ class Backtester:
         ohlcv_df:        pd.DataFrame,
         initial_nav:     float = INITIAL_NAV,
         audit_lookahead: bool  = True,
+        symbol:          str   = "",
     ) -> BacktestReport:
         """Run full walk-forward backtest on ohlcv_df.
 
@@ -141,14 +154,15 @@ class Backtester:
             is_df  = ohlcv_df.iloc[is_start:is_end]
             oos_df = ohlcv_df.iloc[is_end:oos_end]
             fold   = self.run_fold(is_df, oos_df, nav, audit_lookahead=audit_lookahead,
-                                   fold_idx=idx)
+                                   fold_idx=idx, symbol=symbol)
             folds.append(fold)
             nav = float(fold.equity_curve.iloc[-1])
 
         # Concatenate OOS equity curves
         equity = pd.concat([f.equity_curve for f in folds])
-        all_trades     = [t for f in folds for t in f.trades]
-        all_regime_log = [r for f in folds for r in f.regime_log]
+        all_trades      = [t for f in folds for t in f.trades]
+        all_regime_log  = [r for f in folds for r in f.regime_log]
+        all_lag_transitions = [t for f in folds for t in f.lag_transitions]
 
         perf = compute_performance(equity, all_trades, all_regime_log)
 
@@ -159,6 +173,14 @@ class Backtester:
             bmark_equity = pd.concat([f.benchmark_curves[name] for f in folds])
             bmark_trades = _equity_to_trades(bmark_equity)
             bmark_reports[name] = compute_performance(bmark_equity, bmark_trades, [])
+
+        # Lag analysis report
+        lag_report = build_lag_report(all_lag_transitions, BAR_INTERVAL_SECS)
+        try:
+            write_lag_report(lag_report, LOGS_DIR)
+        except Exception as exc:
+            log.warning("Could not write lag report: %s", exc)
+        print_lag_summary(lag_report)
 
         return BacktestReport(
             folds=folds,
@@ -178,6 +200,7 @@ class Backtester:
         feature_fn:      Callable = compute,
         audit_lookahead: bool  = True,
         fold_idx:        int   = 0,
+        symbol:          str   = "",
     ) -> FoldResult:
         """Train HMM on is_df, simulate the strategy bar-by-bar over oos_df.
 
@@ -222,6 +245,14 @@ class Backtester:
         regime_log: list[RegimeLogEntry] = []
         equity_nav: dict = {}
 
+        # Per-bar tracking for lag analysis
+        raw_reg_hist:  list[int]   = []
+        conf_reg_hist: list[int]   = []
+        close_hist:    list[float] = []
+        nav_hist:      list[float] = []
+        alloc_hist:    list[float] = []
+        ts_hist:       list        = []
+
         # Align oos_features with oos_df by index
         oos_idx = oos_df.index.intersection(oos_features.index)
 
@@ -235,10 +266,13 @@ class Backtester:
                 bar_return = (close / prev_close) - 1.0
 
             # Regime prediction (forward-only)
-            regime_raw  = engine.predict_current(feat_row)
+            regime_raw   = engine.predict_current(feat_row)
             is_uncertain = engine.is_uncertain()
             regime       = max(regime_raw, 0)
             confidence   = 0.7  # simplified; could derive from HMM posteriors
+
+            # Raw regime: engine._pending_state is the pre-gate mapped regime for this bar
+            raw_regime = engine._pending_state if engine._pending_state is not None else -1
 
             # Strategy signal
             signal = get_signal(
@@ -281,6 +315,14 @@ class Backtester:
                 allocation_pct=target_alloc,
             ))
 
+            # Record pre-return NAV and pre-signal allocation for lag damage calc
+            raw_reg_hist.append(raw_regime)
+            conf_reg_hist.append(regime_raw)
+            close_hist.append(close)
+            nav_hist.append(nav)        # NAV at bar open (before this bar's return)
+            alloc_hist.append(allocation)  # allocation before signal update
+            ts_hist.append(ts)
+
             # Update risk manager after realising P&L
             risk_mgr.update(new_nav)
 
@@ -288,6 +330,18 @@ class Backtester:
             nav        = new_nav
             allocation = target_alloc
             prev_close = close
+
+        # Compute lag transitions for this fold
+        lag_transitions = compute_lag_transitions(
+            raw_regimes=raw_reg_hist,
+            confirmed_regimes=conf_reg_hist,
+            close_prices=close_hist,
+            nav_history=nav_hist,
+            alloc_history=alloc_hist,
+            timestamps=ts_hist,
+            ticker=symbol,
+            bar_interval_secs=BAR_INTERVAL_SECS,
+        )
 
         equity_series = pd.Series(equity_nav)
         if equity_series.empty:
@@ -318,6 +372,7 @@ class Backtester:
             benchmark_curves=bmark_curves,
             regime_distribution=dist,
             n_hmm_states=engine._n_states,
+            lag_transitions=lag_transitions,
         )
 
     def run_stress_test(

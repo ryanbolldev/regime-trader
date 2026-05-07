@@ -75,7 +75,8 @@ CRYPTO_SLIPPAGE_BPS = 10   # 0.10 % — crypto (wider spreads, 24/7 markets)
 # ---------------------------------------------------------------------------
 # Bar resolution
 # ---------------------------------------------------------------------------
-BAR_TIMEFRAME = "1Day"
+BAR_TIMEFRAME      = "1Day"
+BAR_INTERVAL_SECS  = 86400   # seconds per bar (1Day=86400, 5Min=300)
 
 # ---------------------------------------------------------------------------
 # Feature engineering
