@@ -30,6 +30,8 @@ from config.credentials import ConfigurationError
 
 log = logging.getLogger(__name__)
 
+_SEVERITY_RANK: dict[str, int] = {"info": 0, "warning": 1, "critical": 2}
+
 # Load .env once at import time so individual functions see env vars without
 # calling load_dotenv() again (which would defeat monkeypatch.delenv in tests).
 try:
@@ -197,7 +199,10 @@ def send(
 
     subject = f"[Regime Trader] {canonical}"
     try:
-        send_email(subject, message)
+        from config import settings as _s
+        min_sev = getattr(_s, "ALERT_EMAIL_MIN_SEVERITY", "warning")
+        if _SEVERITY_RANK.get(severity, 0) >= _SEVERITY_RANK.get(min_sev, 1):
+            send_email(subject, message)
     except ConfigurationError:
         pass
     except Exception as exc:

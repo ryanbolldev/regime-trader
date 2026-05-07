@@ -91,9 +91,10 @@ ALPACA_BASE_URL = "https://paper-api.alpaca.markets"
 # ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
-ALERT_EMAIL_RECIPIENTS = []
-ALERT_WEBHOOK_URL      = ""
-ALERT_COOLDOWN_SECONDS = 300
+ALERT_EMAIL_RECIPIENTS    = []
+ALERT_WEBHOOK_URL         = ""
+ALERT_COOLDOWN_SECONDS    = 300
+ALERT_EMAIL_MIN_SEVERITY  = "warning"   # email only on "warning" or "critical"
 ALERT_COOLDOWN_OVERRIDES: dict[str, int] = {
     "circuit_breaker":  0,   # critical — never suppress
     "critical_error":   0,   # critical — never suppress

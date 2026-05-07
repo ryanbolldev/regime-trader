@@ -165,6 +165,8 @@ class TestSend:
     def test_dispatches_email_when_configured(self, monkeypatch):
         monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
         _smtp_env(monkeypatch)
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "info")  # allow info for this test
         with patch("smtplib.SMTP") as smtp_cls:
             inst = _smtp_mock(smtp_cls)
             alerts_mod.send("startup", "system started", "info")
@@ -382,3 +384,58 @@ class TestCooldownOverrides:
             alerts_mod.send("circuit_breaker", "first",  "critical")
             alerts_mod.send("circuit_breaker", "second", "critical")  # suppressed by 9999s runtime override
         assert mock_post.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestEmailSeverityGate (ALERT_EMAIL_MIN_SEVERITY)
+# ---------------------------------------------------------------------------
+
+class TestEmailSeverityGate:
+
+    def test_info_severity_skips_email(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "warning")
+        _smtp_env(monkeypatch)
+        monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+        with patch("smtplib.SMTP") as smtp_cls:
+            inst = _smtp_mock(smtp_cls)
+            alerts_mod.send("regime_change", "info message", "info")
+        inst.sendmail.assert_not_called()
+
+    def test_warning_severity_triggers_email(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "warning")
+        _smtp_env(monkeypatch)
+        monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+        with patch("smtplib.SMTP") as smtp_cls:
+            inst = _smtp_mock(smtp_cls)
+            alerts_mod.send("circuit_breaker", "warning message", "warning")
+        inst.sendmail.assert_called_once()
+
+    def test_critical_severity_triggers_email(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "warning")
+        _smtp_env(monkeypatch)
+        monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+        with patch("smtplib.SMTP") as smtp_cls:
+            inst = _smtp_mock(smtp_cls)
+            alerts_mod.send("critical_error", "critical message", "critical")
+        inst.sendmail.assert_called_once()
+
+    def test_webhook_fires_regardless_of_severity(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "warning")
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/abc")
+        with patch("requests.post", return_value=_http_ok()) as mock_post:
+            alerts_mod.send("regime_change", "info event", "info")
+        mock_post.assert_called_once()
+
+    def test_min_severity_info_allows_all_emails(self, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "ALERT_EMAIL_MIN_SEVERITY", "info")
+        _smtp_env(monkeypatch)
+        monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+        with patch("smtplib.SMTP") as smtp_cls:
+            inst = _smtp_mock(smtp_cls)
+            alerts_mod.send("regime_change", "info message", "info")
+        inst.sendmail.assert_called_once()
