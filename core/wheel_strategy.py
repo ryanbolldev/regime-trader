@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import enum
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -35,10 +36,14 @@ from config.settings import (
     WHEEL_EARLY_CLOSE_LOSS_PCT,
     WHEEL_EARLY_CLOSE_PROFIT_PCT,
     WHEEL_GAMMA_RISK_DTE,
+    WHEEL_IV_LOOKBACK_DAYS,
     WHEEL_MAX_DTE,
     WHEEL_MIN_DTE,
+    WHEEL_MIN_IV_RANK,
     WHEEL_PUT_DELTA_TARGET,
 )
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +247,15 @@ class WheelStrategy:
         buying_power: float,
         is_uncertain: bool = False,
         current_pnl_pct: float = 0.0,
+        iv_rank: Optional[float] = None,
     ) -> WheelAction:
-        """Return the recommended WheelAction for the current bar."""
+        """Return the recommended WheelAction for the current bar.
+
+        iv_rank : pre-computed IV Rank (0–100) supplied by the caller.
+                  When None the IV gate is skipped entirely (backward-compatible).
+                  The gate only blocks new entries (SELL_PUT / SELL_CALL);
+                  CLOSE and WAIT signals are never affected.
+        """
         if is_uncertain:
             return WheelAction(
                 action=WheelActionType.WAIT,
@@ -264,6 +276,20 @@ class WheelStrategy:
 
         # CASH — find a put to sell
         if phase == WheelState.CASH:
+            if iv_rank is not None:
+                log.info(
+                    "IV Rank [%s]: %.1f (min=%d) — %s new put entry",
+                    position.symbol, iv_rank, WHEEL_MIN_IV_RANK,
+                    "BLOCKED" if iv_rank < WHEEL_MIN_IV_RANK else "OK for",
+                )
+                if iv_rank < WHEEL_MIN_IV_RANK:
+                    return WheelAction(
+                        action=WheelActionType.WAIT,
+                        contract=None,
+                        reason=f"iv_rank_too_low:{iv_rank:.1f}",
+                        regime=current_regime,
+                    )
+
             contract = self.get_put_to_sell(
                 symbol=position.symbol,
                 option_chain=option_chain,
@@ -285,7 +311,7 @@ class WheelStrategy:
                 regime=current_regime,
             )
 
-        # PUT_SOLD — hold or close early
+        # PUT_SOLD — hold or close early (IV gate never applies here)
         if phase == WheelState.PUT_SOLD:
             if self.should_close_early(position, current_regime, current_pnl_pct):
                 return WheelAction(
@@ -303,6 +329,20 @@ class WheelStrategy:
 
         # ASSIGNED — find a call to sell
         if phase == WheelState.ASSIGNED:
+            if iv_rank is not None:
+                log.info(
+                    "IV Rank [%s]: %.1f (min=%d) — %s new call entry",
+                    position.symbol, iv_rank, WHEEL_MIN_IV_RANK,
+                    "BLOCKED" if iv_rank < WHEEL_MIN_IV_RANK else "OK for",
+                )
+                if iv_rank < WHEEL_MIN_IV_RANK:
+                    return WheelAction(
+                        action=WheelActionType.WAIT,
+                        contract=None,
+                        reason=f"iv_rank_too_low:{iv_rank:.1f}",
+                        regime=current_regime,
+                    )
+
             contract = self.get_call_to_sell(
                 symbol=position.symbol,
                 option_chain=option_chain,
@@ -324,7 +364,7 @@ class WheelStrategy:
                 regime=current_regime,
             )
 
-        # CALL_SOLD — hold or close early
+        # CALL_SOLD — hold or close early (IV gate never applies here)
         if phase == WheelState.CALL_SOLD:
             if self.should_close_early(position, current_regime, current_pnl_pct):
                 return WheelAction(

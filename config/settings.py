@@ -163,3 +163,5 @@ WHEEL_MAX_DTE               =  45     # maximum days to expiration
 WHEEL_EARLY_CLOSE_PROFIT_PCT =  0.50  # close at 50 % of max profit
 WHEEL_EARLY_CLOSE_LOSS_PCT   =  2.00  # stop loss at 200 % of premium received
 WHEEL_GAMMA_RISK_DTE         =  7     # close losing positions with < 7 DTE
+WHEEL_MIN_IV_RANK            = 40     # minimum IV Rank (0–100) before new entry
+WHEEL_IV_LOOKBACK_DAYS       = 252    # rolling window for IV Rank (1 trading year)

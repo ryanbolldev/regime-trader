@@ -28,9 +28,13 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Optional
 
+import datetime as _dt
+
+import numpy as np
 import requests
-from alpaca.data.historical import OptionHistoricalDataClient
-from alpaca.data.requests import OptionChainRequest
+from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
+from alpaca.data.requests import OptionChainRequest, StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetOrdersRequest
 
@@ -234,6 +238,10 @@ class AlpacaClient:
             paper      = creds.is_paper,
         )
         self._options = OptionHistoricalDataClient(
+            api_key    = creds.api_key,
+            secret_key = creds.api_secret,
+        )
+        self._stocks = StockHistoricalDataClient(
             api_key    = creds.api_key,
             secret_key = creds.api_secret,
         )
@@ -471,3 +479,84 @@ class AlpacaClient:
         except Exception as exc:
             _handle_sdk_error(exc)
             raise
+
+    def get_iv_rank(self, symbol: str, lookback_days: int = 252) -> float:
+        """Compute IV Rank (0–100) for *symbol* over a rolling *lookback_days* window.
+
+        Current IV is the median implied volatility of 30–45 DTE options in the
+        live chain.  The historical IV range uses 20-day rolling annualised
+        realised volatility of the underlying as a proxy (Alpaca does not expose
+        a full history of IV snapshots).
+
+        Returns iv_rank = (current_iv - iv_low) / (iv_high - iv_low) × 100,
+        clamped to [0, 100].  Returns 50.0 (neutral) when data are insufficient.
+        """
+        # ── Step 1: current IV from live options chain ─────────────────────
+        try:
+            chain = self.get_option_chain(symbol)
+        except Exception as exc:
+            logger.warning("get_iv_rank [%s]: chain fetch failed — returning 50.0: %s", symbol, exc)
+            return 50.0
+
+        today = _dt.date.today()
+        ivs = [
+            c.implied_volatility
+            for c in chain
+            if c.implied_volatility is not None
+            and 30 <= (_dt.date.fromisoformat(c.expiration) - today).days <= 45
+        ]
+        if not ivs:
+            logger.debug("get_iv_rank [%s]: no 30-45 DTE options with IV — returning 50.0", symbol)
+            return 50.0
+
+        current_iv = float(np.median(ivs))
+
+        # ── Step 2: historical realised vol as IV proxy ────────────────────
+        # Fetch extra bars to cover weekends and holidays in the window.
+        end   = _dt.datetime.now(_dt.timezone.utc)
+        start = end - _dt.timedelta(days=int(lookback_days * 1.6))
+        try:
+            resp = self._stocks.get_stock_bars(
+                StockBarsRequest(
+                    symbol_or_symbols=symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start,
+                    end=end,
+                )
+            )
+            bars = list(resp.get(symbol, []))
+        except Exception as exc:
+            logger.warning("get_iv_rank [%s]: bar fetch failed — returning 50.0: %s", symbol, exc)
+            return 50.0
+
+        if len(bars) < 30:
+            logger.debug(
+                "get_iv_rank [%s]: only %d bars (need ≥30) — returning 50.0",
+                symbol, len(bars),
+            )
+            return 50.0
+
+        closes   = np.array([b.close for b in bars], dtype=float)
+        log_rets = np.log(closes[1:] / closes[:-1])
+
+        roll = 20
+        rv_series = [
+            log_rets[i - roll : i].std() * np.sqrt(252)
+            for i in range(roll, len(log_rets) + 1)
+        ]
+
+        iv_low  = float(min(rv_series))
+        iv_high = float(max(rv_series))
+
+        if iv_high <= iv_low:
+            logger.debug("get_iv_rank [%s]: zero RV range — returning 50.0", symbol)
+            return 50.0
+
+        iv_rank = (current_iv - iv_low) / (iv_high - iv_low) * 100.0
+        iv_rank = max(0.0, min(100.0, iv_rank))
+
+        logger.debug(
+            "get_iv_rank [%s]: current_iv=%.3f rv_low=%.3f rv_high=%.3f rank=%.1f",
+            symbol, current_iv, iv_low, iv_high, iv_rank,
+        )
+        return iv_rank

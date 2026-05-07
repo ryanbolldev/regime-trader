@@ -650,3 +650,91 @@ class TestFullWheelCycle:
         pos_final = get_wheel_position("SPY")
         assert pos_final.active_contract is None
         assert pos_final.premium_collected_total == 275.0   # 200 + 150 − 75
+
+
+# ---------------------------------------------------------------------------
+# TestIVRankGate
+# ---------------------------------------------------------------------------
+
+class TestIVRankGate:
+    """IV Rank gate blocks new SELL_PUT / SELL_CALL entries; never blocks exits.
+
+    iv_rank is passed as a pre-computed float so no live broker call is made.
+    Existing tests omit iv_rank (defaults to None → gate skipped) and are
+    therefore unaffected by this feature.
+    """
+
+    def test_iv_rank_gate_blocks_sell_put(self, ws):
+        """IV Rank of 35 in bull regime returns WAIT with iv_rank_too_low reason."""
+        chain = [_put("SPY", 580.0, -0.28)]
+        action = ws.get_next_action(
+            _cash_position(), current_regime=3, option_chain=chain,
+            portfolio_nav=100_000, buying_power=60_000,
+            iv_rank=35.0,
+        )
+        assert action.action == WheelActionType.WAIT
+        assert "iv_rank_too_low" in action.reason
+        assert "35.0" in action.reason
+
+    def test_iv_rank_gate_blocks_sell_call(self, ws):
+        """IV Rank of 25 in neutral regime blocks new call sale."""
+        chain = [_call("SPY", 595.0, 0.28)]
+        action = ws.get_next_action(
+            _assigned_position(), current_regime=2, option_chain=chain,
+            portfolio_nav=100_000, buying_power=60_000,
+            iv_rank=25.0,
+        )
+        assert action.action == WheelActionType.WAIT
+        assert "iv_rank_too_low" in action.reason
+        assert "25.0" in action.reason
+
+    def test_iv_rank_gate_allows_entry(self, ws):
+        """IV Rank of 65 in bull regime proceeds normally to SELL_PUT."""
+        chain = [_put("SPY", 580.0, -0.28)]
+        action = ws.get_next_action(
+            _cash_position(), current_regime=3, option_chain=chain,
+            portfolio_nav=100_000, buying_power=60_000,
+            iv_rank=65.0,
+        )
+        assert action.action == WheelActionType.SELL_PUT
+        assert action.contract is not None
+
+    def test_iv_rank_gate_does_not_block_close(self, ws):
+        """Active position with IV Rank of 20 still generates CLOSE when early-close
+        conditions are met — the gate never applies to existing positions."""
+        # PUT_SOLD position at 50 % profit → triggers early close regardless of IV
+        action = ws.get_next_action(
+            _put_sold_position(), current_regime=3, option_chain=[],
+            portfolio_nav=100_000, buying_power=60_000,
+            current_pnl_pct=0.50, iv_rank=20.0,
+        )
+        assert action.action == WheelActionType.CLOSE
+
+    def test_iv_rank_gate_does_not_block_close_call_leg(self, ws):
+        """CALL_SOLD position at crash regime generates CLOSE regardless of IV Rank."""
+        action = ws.get_next_action(
+            _call_sold_position(), current_regime=0, option_chain=[],
+            portfolio_nav=100_000, buying_power=60_000,
+            current_pnl_pct=0.0, iv_rank=10.0,
+        )
+        assert action.action == WheelActionType.CLOSE
+
+    def test_iv_rank_boundary(self, ws):
+        """IV Rank of exactly 40 is allowed — gate is strictly less-than, not ≤."""
+        chain = [_put("SPY", 580.0, -0.28)]
+        action = ws.get_next_action(
+            _cash_position(), current_regime=3, option_chain=chain,
+            portfolio_nav=100_000, buying_power=60_000,
+            iv_rank=40.0,
+        )
+        assert action.action == WheelActionType.SELL_PUT
+
+    def test_iv_rank_none_skips_gate(self, ws):
+        """When iv_rank is None (not provided) the gate is bypassed entirely."""
+        chain = [_put("SPY", 580.0, -0.28)]
+        # No iv_rank kwarg — should proceed to SELL_PUT as before
+        action = ws.get_next_action(
+            _cash_position(), current_regime=3, option_chain=chain,
+            portfolio_nav=100_000, buying_power=60_000,
+        )
+        assert action.action == WheelActionType.SELL_PUT
