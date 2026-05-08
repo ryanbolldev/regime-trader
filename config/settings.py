@@ -162,7 +162,6 @@ MSTR_BTC_BETA = 2.5
 # ---------------------------------------------------------------------------
 SCANNER_MIN_VOLUME          = 1_000_000   # avg daily volume filter
 SCANNER_MIN_PRICE           = 10.0        # price per share filter
-SCANNER_EARNINGS_BUFFER_DAYS = 7          # skip tickers within N days of earnings
 SCANNER_MAX_WORKERS         = 5           # ThreadPoolExecutor parallelism (rate-limit safe)
 SCANNER_BATCH_SLEEP_SECS    = 0.5         # sleep between worker batches to throttle API calls
 SCANNER_MAX_RETRIES         = 3           # per-ticker retries on HTTP 429 before exclusion

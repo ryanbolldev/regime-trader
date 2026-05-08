@@ -38,13 +38,11 @@ _BUCKETS   = ["80-100", "60-80", "40-60", "20-40", "0-20"]
 
 # Human-readable labels for exclusion reason keys
 _EXCLUSION_LABELS: dict[str, str] = {
-    "earnings_within_7_days":    "Earnings within 7 days",
-    "earnings_data_unavailable": "Earnings data unavailable",
-    "low_volume":                "Low volume (<1M ADV)",
-    "low_price":                 "Price below $10",
-    "fit_failed":                "HMM fit failure",
-    "rate_limit_exhausted":      "Rate limit exhausted",
-    "low_liquidity_options":     "Low liquidity options",
+    "low_volume":            "Low volume (<1M ADV)",
+    "low_price":             "Price below $10",
+    "fit_failed":            "HMM fit failure",
+    "rate_limit_exhausted":  "Rate limit exhausted",
+    "low_liquidity_options": "Low liquidity options",
 }
 _EXCLUSION_KEY_ORDER = list(_EXCLUSION_LABELS)
 

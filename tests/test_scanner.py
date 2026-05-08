@@ -110,7 +110,6 @@ class TestUniverseManager:
             universe=["HIGH_VOL", "LOW_VOL"],
             min_volume=1_000_000,
             min_price=10.0,
-            earnings_buffer_days=0,
         )
         assert "HIGH_VOL" in result
         assert "LOW_VOL"  not in result
@@ -132,7 +131,7 @@ class TestUniverseManager:
 
         mgr    = UniverseManager(client=mock_client)
         result = mgr.get_tradeable(
-            universe=["AAPL"], min_volume=1_000_000, min_price=10.0, earnings_buffer_days=0
+            universe=["AAPL"], min_volume=1_000_000, min_price=10.0
         )
         assert "AAPL" in result
 
@@ -147,32 +146,17 @@ class TestUniverseManager:
 
         mgr    = UniverseManager(client=mock_client)
         result = mgr.get_tradeable(
-            universe=["MISSING"], min_volume=0, min_price=0.0, earnings_buffer_days=0
+            universe=["MISSING"], min_volume=0, min_price=0.0
         )
         assert "MISSING" not in result
 
-    def test_earnings_filter_removes_near_earnings(self):
-        """Tickers within earnings_buffer_days are excluded."""
-        import datetime
-        today   = datetime.date.today()
-        soon    = (today + datetime.timedelta(days=3)).isoformat()
-        # _filter_volume_price now returns (list, dict); _fetch_near_earnings returns dict|None
-        with patch.object(
-            UniverseManager, "_filter_volume_price",
-            return_value=(["AAPL", "MSFT"], {}),
-        ), patch.object(
-            UniverseManager, "_fetch_near_earnings",
-            return_value={"AAPL": [(soon, "confirmed")]},
-        ):
-            mgr    = UniverseManager(client=MagicMock())
-            result = mgr.get_tradeable(
-                universe=["AAPL", "MSFT"],
-                min_volume=0,
-                min_price=0,
-                earnings_buffer_days=7,
-            )
-        assert "AAPL"  not in result
-        assert "MSFT" in result
+    def test_universe_pipeline_two_filters_only(self):
+        """get_tradeable() runs only volume/price filter — no earnings method exists."""
+        mgr = UniverseManager(client=None)
+        assert not hasattr(mgr, "_filter_earnings"), \
+            "_filter_earnings must be removed from UniverseManager"
+        assert not hasattr(mgr, "_fetch_near_earnings"), \
+            "_fetch_near_earnings must be removed from UniverseManager"
 
 
 # ---------------------------------------------------------------------------
@@ -487,73 +471,7 @@ class TestScoreDistribution:
 
 
 # ---------------------------------------------------------------------------
-# 9. Airtight earnings filter (improvement 3)
-# ---------------------------------------------------------------------------
-
-class TestEarningsFilterHardening:
-    """Tests for the fail-safe earnings exclusion logic in UniverseManager."""
-
-    def _mgr(self):
-        return UniverseManager(client=MagicMock())
-
-    def _patch_vp(self, tickers):
-        """Patch _filter_volume_price to pass tickers through unchanged."""
-        return patch.object(
-            UniverseManager, "_filter_volume_price",
-            return_value=(list(tickers), {}),
-        )
-
-    def test_earnings_filter_excludes_estimated_date(self):
-        """Ticker with estimated earnings in 5 days excluded even if confirmed is 10 days away."""
-        import datetime
-        today     = datetime.date.today()
-        estimated = (today + datetime.timedelta(days=5)).isoformat()   # within buffer
-        confirmed = (today + datetime.timedelta(days=10)).isoformat()  # outside buffer
-
-        earnings_data = {"TSLA": [(estimated, "estimated"), (confirmed, "confirmed")]}
-
-        with self._patch_vp(["TSLA", "AAPL"]), patch.object(
-            UniverseManager, "_fetch_near_earnings", return_value=earnings_data
-        ):
-            result = self._mgr().get_tradeable(
-                universe=["TSLA", "AAPL"], earnings_buffer_days=7
-            )
-
-        assert "TSLA" not in result, "TSLA should be excluded on estimated date"
-        assert "AAPL" in result
-
-    def test_earnings_filter_fails_safe_on_missing_data(self):
-        """When earnings API returns None (failure), all tickers are excluded."""
-        with self._patch_vp(["AAPL", "MSFT"]), patch.object(
-            UniverseManager, "_fetch_near_earnings", return_value=None
-        ):
-            mgr    = self._mgr()
-            result = mgr.get_tradeable(
-                universe=["AAPL", "MSFT"], earnings_buffer_days=7
-            )
-
-        assert result == [], "All tickers should be excluded when API fails"
-        assert mgr.exclusion_counts.get("earnings_data_unavailable", 0) == 2
-
-    def test_earnings_exclusion_logged_with_date(self, caplog):
-        """Exclusion log contains the specific earnings date for each excluded ticker."""
-        import datetime, logging
-        today  = datetime.date.today()
-        ann    = (today + datetime.timedelta(days=3)).isoformat()
-
-        earnings_data = {"TSLA": [(ann, "estimated")]}
-
-        with self._patch_vp(["TSLA"]), patch.object(
-            UniverseManager, "_fetch_near_earnings", return_value=earnings_data
-        ), caplog.at_level(logging.INFO):
-            self._mgr().get_tradeable(universe=["TSLA"], earnings_buffer_days=7)
-
-        assert ann in caplog.text, f"Date {ann} should appear in log"
-        assert "TSLA" in caplog.text
-
-
-# ---------------------------------------------------------------------------
-# 10. Paper validation banner (improvement 3)
+# 10. Paper validation banner
 # ---------------------------------------------------------------------------
 
 class TestPaperValidationBanner:
@@ -606,7 +524,7 @@ class TestPaperValidationBanner:
         assert deploy_file.read_text(encoding="utf-8").strip() != ""
 
     def test_exclusions_breakdown_all_reasons_present(self, tmp_path):
-        """Markdown exclusions section contains all seven reason categories."""
+        """Markdown exclusions section contains all five reason categories."""
         import datetime
         deploy_file = tmp_path / "deployment_date.txt"
         deploy_file.write_text(
@@ -615,21 +533,17 @@ class TestPaperValidationBanner:
         )
 
         excl = {
-            "earnings_within_7_days":    3,
-            "earnings_data_unavailable": 1,
-            "low_volume":                5,
-            "low_price":                 2,
-            "fit_failed":                1,
-            "rate_limit_exhausted":      1,
-            "low_liquidity_options":     4,
+            "low_volume":            5,
+            "low_price":             2,
+            "fit_failed":            1,
+            "rate_limit_exhausted":  1,
+            "low_liquidity_options": 4,
         }
         reporter  = Reporter(logs_dir=tmp_path)
         _, md_path = reporter.write([self._make_scored()], {}, exclusion_counts=excl)
         content   = md_path.read_text(encoding="utf-8")
 
         expected_labels = [
-            "Earnings within 7 days",
-            "Earnings data unavailable",
             "Low volume",
             "Price below",
             "HMM fit failure",
