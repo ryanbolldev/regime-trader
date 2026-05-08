@@ -94,14 +94,14 @@ class TestUniverseManager:
         mock_client = MagicMock()
 
         def fake_bars(req):
-            symbol = req.symbol_or_symbols
-            if symbol == "LOW_VOL":
-                bars = [MagicMock(volume=100_000, close=50.0) for _ in range(10)]
-            else:
-                bars = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
-            m = MagicMock()
-            m.get = lambda s, default=None: bars if s == symbol else default
-            return m
+            tickers = req.symbol_or_symbols
+            result = {}
+            for t in (tickers if isinstance(tickers, list) else [tickers]):
+                if t == "LOW_VOL":
+                    result[t] = [MagicMock(volume=100_000, close=50.0) for _ in range(10)]
+                else:
+                    result[t] = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
+            return result
 
         mock_client._stocks.get_stock_bars.side_effect = fake_bars
 
@@ -114,6 +114,42 @@ class TestUniverseManager:
         )
         assert "HIGH_VOL" in result
         assert "LOW_VOL"  not in result
+
+    def test_barset_accessor_uses_bracket_notation(self):
+        """_filter_volume_price uses resp[ticker] not resp.get() — works with BarSet-like objects."""
+        class _FakeBarSet:
+            def __init__(self, data):
+                self._data = data
+            def __contains__(self, key):
+                return key in self._data
+            def __getitem__(self, key):
+                return self._data[key]
+            # deliberately no .get() method
+
+        bars = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
+        mock_client = MagicMock()
+        mock_client._stocks.get_stock_bars.return_value = _FakeBarSet({"AAPL": bars})
+
+        mgr    = UniverseManager(client=mock_client)
+        result = mgr.get_tradeable(
+            universe=["AAPL"], min_volume=1_000_000, min_price=10.0, earnings_buffer_days=0
+        )
+        assert "AAPL" in result
+
+    def test_barset_missing_ticker_returns_empty(self):
+        """Ticker absent from the batch response is silently dropped (insufficient bars)."""
+        class _FakeBarSet:
+            def __contains__(self, key): return False
+            def __getitem__(self, key): raise KeyError(key)
+
+        mock_client = MagicMock()
+        mock_client._stocks.get_stock_bars.return_value = _FakeBarSet()
+
+        mgr    = UniverseManager(client=mock_client)
+        result = mgr.get_tradeable(
+            universe=["MISSING"], min_volume=0, min_price=0.0, earnings_buffer_days=0
+        )
+        assert "MISSING" not in result
 
     def test_earnings_filter_removes_near_earnings(self):
         """Tickers within earnings_buffer_days are excluded."""

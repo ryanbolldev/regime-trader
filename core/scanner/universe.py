@@ -102,7 +102,7 @@ class UniverseManager:
         min_volume: float,
         min_price: float,
     ) -> tuple[list[str], dict[str, int]]:
-        """Fetch 20-day bar history; remove tickers below volume or price floors.
+        """Fetch 20-day bar history in batches; remove tickers below volume or price floors.
 
         Returns (passing_tickers, {reason: count}).
         """
@@ -117,41 +117,53 @@ class UniverseManager:
         n_low_vol   = 0
         n_low_price = 0
 
-        for ticker in tickers:
+        chunk_size = 50
+        for i in range(0, len(tickers), chunk_size):
+            chunk = tickers[i : i + chunk_size]
             try:
                 resp = self._client._stocks.get_stock_bars(
                     StockBarsRequest(
-                        symbol_or_symbols=ticker,
+                        symbol_or_symbols=chunk,
                         timeframe=TimeFrame.Day,
                         start=start,
                         end=end,
                         feed=SCANNER_DATA_FEED,
                     )
                 )
-                bars = list(resp.get(ticker, []))
-                if len(bars) < 5:
-                    log.debug("Universe drop %s: insufficient bars (%d)", ticker, len(bars))
-                    continue
-                avg_volume = float(np.mean([b.volume for b in bars]))
-                avg_close  = float(np.mean([b.close  for b in bars]))
-                if avg_volume < min_volume:
-                    log.debug(
-                        "[SCANNER] %s excluded — low volume (%.0f < %.0f ADV)",
-                        ticker, avg_volume, min_volume,
-                    )
-                    n_low_vol += 1
-                    continue
-                if avg_close < min_price:
-                    log.debug(
-                        "[SCANNER] %s excluded — price below floor ($%.2f < $%.2f)",
-                        ticker, avg_close, min_price,
-                    )
-                    n_low_price += 1
-                    continue
-                passing.append(ticker)
             except Exception as exc:
-                log.warning("Universe filter error for %s (kept): %s", ticker, exc)
-                passing.append(ticker)
+                log.warning(
+                    "Universe filter: batch fetch failed for chunk %s…: %s — keeping all",
+                    chunk[:3], exc,
+                )
+                passing.extend(chunk)
+                continue
+
+            for ticker in chunk:
+                try:
+                    bars = list(resp[ticker]) if ticker in resp else []
+                    if len(bars) < 5:
+                        log.debug("Universe drop %s: insufficient bars (%d)", ticker, len(bars))
+                        continue
+                    avg_volume = float(np.mean([b.volume for b in bars]))
+                    avg_close  = float(np.mean([b.close  for b in bars]))
+                    if avg_volume < min_volume:
+                        log.debug(
+                            "[SCANNER] %s excluded — low volume (%.0f < %.0f ADV)",
+                            ticker, avg_volume, min_volume,
+                        )
+                        n_low_vol += 1
+                        continue
+                    if avg_close < min_price:
+                        log.debug(
+                            "[SCANNER] %s excluded — price below floor ($%.2f < $%.2f)",
+                            ticker, avg_close, min_price,
+                        )
+                        n_low_price += 1
+                        continue
+                    passing.append(ticker)
+                except Exception as exc:
+                    log.warning("Universe filter error for %s (kept): %s", ticker, exc)
+                    passing.append(ticker)
 
         return passing, {"low_volume": n_low_vol, "low_price": n_low_price}
 
