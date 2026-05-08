@@ -59,6 +59,9 @@ from config.settings import (
     HMM_MIN_STATES,
     HMM_N_INIT,
     HMM_N_ITER,
+    HMM_STALENESS_CALIBRATION_BARS,
+    HMM_STALENESS_MIN_SAMPLE_BARS,
+    HMM_STALENESS_ZSCORE_LIVE,
     HMM_TOL,
     HMM_TRAIN_BARS,
 )
@@ -107,6 +110,7 @@ class HMMEngine:
         self._train_ll_mean: Optional[float] = None
         self._train_ll_std:  Optional[float] = None
         self._is_model_stale: bool = False
+        self._staleness_disabled: bool = False
 
     # ------------------------------------------------------------------
     # Training
@@ -168,8 +172,9 @@ class HMMEngine:
         if best_model is None:
             raise RuntimeError("All HMM candidate fits failed.")
 
-        self._model    = best_model
-        self._n_states = best_model.n_components
+        self._model     = best_model
+        self._n_states  = best_model.n_components
+        self._last_bic  = best_bic
 
         _mon      = getattr(best_model, "monitor_", None)
         _hist     = getattr(_mon, "history",   [])
@@ -182,16 +187,27 @@ class HMMEngine:
             _ll_delta, _conv, len(_hist), HMM_N_ITER,
         )
 
-        # Staleness reference: log-likelihood distribution from last 30 training bars.
-        # Future predictions < (mean - 2 std) of this window trigger is_model_stale.
-        X_ref = X[-30:] if len(X) >= 30 else X
+        # Staleness reference: log-likelihood distribution from last N training bars.
+        # Future predictions < (mean - zscore * std) of this window trigger is_model_stale.
+        X_ref = X[-HMM_STALENESS_CALIBRATION_BARS:] if len(X) >= HMM_STALENESS_CALIBRATION_BARS else X
         ll_ref = _per_row_log_likelihood(best_model, X_ref)
         self._train_ll_mean = float(np.mean(ll_ref))
         self._train_ll_std  = float(np.std(ll_ref))
         self._is_model_stale = False
+
+        if len(ll_ref) < HMM_STALENESS_MIN_SAMPLE_BARS:
+            self._staleness_disabled = True
+            log.warning(
+                "[HMM] Staleness detection disabled — insufficient training bars (%d < %d)",
+                len(ll_ref), HMM_STALENESS_MIN_SAMPLE_BARS,
+            )
+        else:
+            self._staleness_disabled = False
+
         log.debug(
-            "HMM [%s] staleness baseline: mean=%.3f std=%.3f (n=%d bars)",
-            self.symbol, self._train_ll_mean, self._train_ll_std, len(X_ref),
+            "HMM [%s] staleness baseline: mean=%.3f std=%.3f (n=%d bars, disabled=%s)",
+            self.symbol, self._train_ll_mean, self._train_ll_std,
+            len(X_ref), self._staleness_disabled,
         )
 
         # Build state → regime mapping sorted by mean return (first feature column)
@@ -208,13 +224,21 @@ class HMMEngine:
     # Prediction (forward algorithm only)
     # ------------------------------------------------------------------
 
-    def predict_current(self, features_row: pd.Series) -> int:
+    def predict_current(
+        self,
+        features_row: pd.Series,
+        staleness_zscore: Optional[float] = None,
+    ) -> int:
         """Predict the regime for a single bar using the forward algorithm.
 
         Parameters
         ----------
-        features_row : Series of feature values for the *current* bar only.
-                       Must not contain future data.
+        features_row     : Series of feature values for the *current* bar only.
+                           Must not contain future data.
+        staleness_zscore : Standard-deviation multiplier for the staleness threshold.
+                           Defaults to HMM_STALENESS_ZSCORE_LIVE (2.0).
+                           Pass a higher value (e.g. 2.5) for walk-forward contexts,
+                           or 999.0 to effectively disable staleness detection.
 
         Returns
         -------
@@ -251,18 +275,19 @@ class HMMEngine:
             )
 
         # Staleness check: current observation's log-likelihood vs training distribution.
-        if self._train_ll_mean is not None:
+        if self._train_ll_mean is not None and not self._staleness_disabled:
             current_ll = float(_per_row_log_likelihood(self._model, obs)[0])
             std        = self._train_ll_std or 0.0
-            threshold  = self._train_ll_mean - 2.0 * std
+            _zscore    = staleness_zscore if staleness_zscore is not None else HMM_STALENESS_ZSCORE_LIVE
+            threshold  = self._train_ll_mean - _zscore * std
             if current_ll < threshold:
                 self._is_model_stale = True
                 self._uncertain      = True
                 log.warning(
                     "HMM [%s] model may be stale: obs_ll=%.3f < threshold=%.3f "
-                    "(mean=%.3f std=%.3f)",
+                    "(mean=%.3f std=%.3f zscore=%.1f)",
                     self.symbol, current_ll, threshold,
-                    self._train_ll_mean, std,
+                    self._train_ll_mean, std, _zscore,
                 )
             else:
                 self._is_model_stale = False

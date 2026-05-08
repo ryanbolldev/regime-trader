@@ -665,3 +665,63 @@ class TestBatchTrainerRateLimits:
         assert len(results) == 1
         assert results[0].fit_failed is True
         assert results[0].error_message == "rate_limit_exhausted"
+
+
+# ---------------------------------------------------------------------------
+# 11. IEX feed enforcement + SSL error handling
+# ---------------------------------------------------------------------------
+
+class TestIEXFeedAndSSLHandling:
+
+    def test_universe_filter_uses_iex_feed(self):
+        """_filter_volume_price must pass feed='iex' in every StockBarsRequest."""
+        mock_client = MagicMock()
+        mock_client._stocks.get_stock_bars.return_value = {}
+
+        mgr = UniverseManager(client=mock_client)
+        mgr._filter_volume_price(["SPY"], min_volume=0.0, min_price=0.0)
+
+        mock_client._stocks.get_stock_bars.assert_called_once()
+        request = mock_client._stocks.get_stock_bars.call_args[0][0]
+        feed = request.feed
+        assert feed == "iex" or (hasattr(feed, "value") and feed.value == "iex"), (
+            f"Expected feed='iex' in StockBarsRequest, got {feed!r}"
+        )
+
+    def test_batch_trainer_uses_iex_feed(self):
+        """fetch_ohlcv() in run_scanner must pass feed='iex' in StockBarsRequest."""
+        from scripts.run_scanner import fetch_ohlcv
+
+        mock_client = MagicMock()
+        mock_client._stocks.get_stock_bars.return_value = {}
+
+        fetch_ohlcv(mock_client, ["SPY"], train_bars=10)
+
+        mock_client._stocks.get_stock_bars.assert_called_once()
+        request = mock_client._stocks.get_stock_bars.call_args[0][0]
+        feed = request.feed
+        assert feed == "iex" or (hasattr(feed, "value") and feed.value == "iex"), (
+            f"Expected feed='iex' in StockBarsRequest, got {feed!r}"
+        )
+
+    def test_scanner_ssl_error_exits_cleanly(self, caplog):
+        """ssl.SSLError during pipeline produces exit code 1 and a clean log message."""
+        import ssl
+        import logging
+        from scripts.run_scanner import main
+
+        with (
+            patch("broker.alpaca_client.AlpacaClient"),
+            patch("scripts.run_scanner.UniverseManager") as mock_um,
+            caplog.at_level(logging.ERROR, logger="scanner"),
+        ):
+            mock_um.return_value.get_tradeable.side_effect = ssl.SSLError(
+                "certificate verify failed"
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        assert any(
+            "[Scanner] SSL/network error" in r.message for r in caplog.records
+        ), f"Expected SSL error log, got: {[r.message for r in caplog.records]}"

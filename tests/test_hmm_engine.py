@@ -6,6 +6,8 @@ Unit tests for core/hmm_engine.py and core/feature_engineering.py.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,7 +18,7 @@ from core.feature_engineering import (
     compute,
     validate_no_lookahead,
 )
-from core.hmm_engine import HMMEngine, _check_flicker, _map_regime_label
+from core.hmm_engine import HMMEngine, _check_flicker, _map_regime_label, _per_row_log_likelihood
 
 
 # ---------------------------------------------------------------------------
@@ -612,3 +614,72 @@ class TestHMMConvergence:
         assert len(engine._state_to_regime) == engine._n_states
         regime_labels = set(engine._state_to_regime.values())
         assert regime_labels.issubset({0, 1, 2, 3, 4})
+
+
+# ===========================================================================
+# TestStalenessThresholdConfigurable
+# ===========================================================================
+
+class TestStalenessThresholdConfigurable:
+
+    def test_staleness_zscore_parameter_respected(self):
+        """zscore=999.0 does not fire when obs_ll is just below the 2σ threshold; zscore=2.0 does."""
+        engine, features = _fitted_engine()
+
+        # Force known reference stats: threshold at z=2.0 is -120, at z=999.0 is -10090
+        engine._train_ll_mean    = -100.0
+        engine._train_ll_std     =  10.0
+        engine._staleness_disabled = False
+
+        row = features.iloc[-1]
+
+        # obs_ll=-121 is just below mean-2σ=-120, so z=2.0 fires but z=999.0 does not
+        with patch("core.hmm_engine._per_row_log_likelihood", return_value=np.array([-121.0])):
+            engine.predict_current(row, staleness_zscore=999.0)
+        assert engine.is_model_stale is False
+
+        engine._is_model_stale = False
+        with patch("core.hmm_engine._per_row_log_likelihood", return_value=np.array([-121.0])):
+            engine.predict_current(row, staleness_zscore=2.0)
+        assert engine.is_model_stale is True
+
+    def test_staleness_disabled_below_min_sample_bars(self):
+        """Calibration window < MIN_SAMPLE_BARS → _staleness_disabled=True; extreme obs never stale."""
+        with (
+            patch("core.hmm_engine.HMM_STALENESS_CALIBRATION_BARS", 2),
+            patch("core.hmm_engine.HMM_STALENESS_MIN_SAMPLE_BARS", 10),
+        ):
+            engine, features = _fitted_engine()
+
+        assert engine._staleness_disabled is True
+
+        extreme_row = pd.Series([-99.0] * features.shape[1], index=features.columns)
+        engine.predict_current(extreme_row)
+        assert engine.is_model_stale is False
+
+    def test_staleness_calibration_uses_last_n_bars(self):
+        """engine._train_ll_mean matches mean LL of the last CALIBRATION_BARS training rows."""
+        from config.settings import HMM_STALENESS_CALIBRATION_BARS
+
+        engine, features = _fitted_engine()
+
+        X = features.values.astype(float)
+        X_ref = X[-HMM_STALENESS_CALIBRATION_BARS:]
+        expected_mean = float(np.mean(_per_row_log_likelihood(engine._model, X_ref)))
+
+        assert engine._train_ll_mean == pytest.approx(expected_mean, abs=1e-6)
+
+    def test_staleness_calibration_bars_configurable(self):
+        """Patching CALIBRATION_BARS=60 → calibration mean matches last-60-bars computation."""
+        ohlcv    = _make_ohlcv(800)
+        features = compute(ohlcv).dropna()
+
+        with patch("core.hmm_engine.HMM_STALENESS_CALIBRATION_BARS", 60):
+            engine = HMMEngine()
+            engine.fit(features)
+
+        X = features.tail(engine.train_bars).values.astype(float)
+        X_ref = X[-60:]
+        expected = float(np.mean(_per_row_log_likelihood(engine._model, X_ref)))
+
+        assert engine._train_ll_mean == pytest.approx(expected, abs=1e-6)

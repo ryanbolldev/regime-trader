@@ -190,9 +190,13 @@ def submit_crypto_order(
     side:         str,
     notional_usd: float,
     client: Optional[AlpacaClient] = None,
+    qty:          Optional[float]  = None,
 ) -> Optional[OrderResult]:
-    """Submit a notional crypto order.  Returns None if notional <= 0 or a
-    duplicate open order already exists for the symbol.
+    """Submit a crypto order.  Returns None if notional <= 0 or a duplicate
+    open order already exists for the symbol.
+
+    For sell orders, pass qty (exact units held) to avoid Alpaca notional
+    rounding errors that cause 403s when the converted amount exceeds balance.
     """
     if notional_usd <= 0:
         log.debug(
@@ -213,6 +217,26 @@ def submit_crypto_order(
     except Exception as exc:
         log.warning("Could not check existing orders for %s: %s", symbol, exc)
 
+    if side.lower() == "sell" and qty is not None:
+        log.info(
+            "Crypto order: symbol=%s side=%s qty=%.8f (quantity-based)",
+            symbol, side, qty,
+        )
+        try:
+            return c.submit_order(
+                symbol=symbol,
+                qty=qty,
+                side="sell",
+                order_type="market",
+                time_in_force="ioc",
+            )
+        except Exception as exc:
+            log.error(
+                "Crypto order failed: symbol=%s side=%s qty=%.8f error=%s",
+                symbol, side, qty, exc,
+            )
+            raise
+
     log.info(
         "Crypto order: symbol=%s side=%s notional=$%.2f", symbol, side, notional_usd
     )
@@ -221,6 +245,7 @@ def submit_crypto_order(
             symbol=symbol,
             notional_usd=notional_usd,
             side=side,
+            time_in_force="gtc",
         )
     except Exception as exc:
         log.error(

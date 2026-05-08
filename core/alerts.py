@@ -64,6 +64,8 @@ _CANONICAL: dict[str, str] = {
     "critical_error":   "CIRCUIT_BREAKER",
     "onchain_signal":   "ONCHAIN_SIGNAL",
     "cycle_signal":     "CYCLE_SIGNAL",
+    "scanner_briefing":    "SCANNER_BRIEFING",
+    "walkforward_complete": "WALKFORWARD_COMPLETE",
 }
 
 

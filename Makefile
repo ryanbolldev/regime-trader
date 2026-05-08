@@ -1,7 +1,7 @@
 DOCKER_COMPOSE ?= docker compose
 SERVICE        := regime_trader
 
-.PHONY: build up down logs test shell dashboard restart
+.PHONY: build up down logs test shell dashboard restart scan walkforward
 
 build:
 	$(DOCKER_COMPOSE) build
@@ -25,3 +25,9 @@ dashboard:
 	$(DOCKER_COMPOSE) up -d dashboard
 
 restart: down up
+
+scan:
+	python scripts/run_scanner.py
+
+walkforward:
+	python scripts/run_walk_forward.py

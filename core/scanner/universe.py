@@ -24,6 +24,7 @@ import logging
 from typing import Optional
 
 from config.settings import (
+    SCANNER_DATA_FEED,
     SCANNER_EARNINGS_BUFFER_DAYS,
     SCANNER_MIN_PRICE,
     SCANNER_MIN_VOLUME,
@@ -124,6 +125,7 @@ class UniverseManager:
                         timeframe=TimeFrame.Day,
                         start=start,
                         end=end,
+                        feed=SCANNER_DATA_FEED,
                     )
                 )
                 bars = list(resp.get(ticker, []))

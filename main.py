@@ -134,6 +134,7 @@ class RegimeTrader:
 
         # Persistent BTC strategy instance — tracks bar counter for unconfirmed-buy guard
         self._btc_strategy: Optional[object] = None
+        self._btc_exit_failure_count: int = 0
 
     # ------------------------------------------------------------------
     # Startup
@@ -654,13 +655,15 @@ class RegimeTrader:
                     btc_symbol, "buy", order_size, self._client
                 )
             elif action.action in ("REDUCE", "EXIT", "SELL"):
+                sell_qty = current_position.shares_held if current_position is not None else None
                 result = order_executor.submit_crypto_order(
-                    btc_symbol, "sell", order_size, self._client
+                    btc_symbol, "sell", order_size, self._client, qty=sell_qty
                 )
             else:
                 result = None
 
             if result is not None:
+                self._btc_exit_failure_count = 0
                 if action.action == "BUY":
                     strategy.record_buy()
                 alerts.send_btc_trade_alert(
@@ -679,7 +682,22 @@ class RegimeTrader:
                     "conf":     round(confidence, 2),
                 })
         except Exception as exc:
-            log.error("BTC order execution failed: %s", exc)
+            if action.action in ("REDUCE", "EXIT", "SELL"):
+                self._btc_exit_failure_count += 1
+                n = self._btc_exit_failure_count
+                log.error(
+                    "BTC EXIT order failed (attempt %d): %s", n, exc
+                )
+                if n >= 3:
+                    msg = (
+                        f"BTC EXIT has failed {n} consecutive times — "
+                        "operator intervention required"
+                    )
+                    log.error(msg)
+                    alerts.send("critical_error", msg, severity="critical")
+                    return
+            else:
+                log.error("BTC order execution failed: %s", exc)
 
     def _fetch_bars_with_retry(self, ticker: str) -> Optional[pd.DataFrame]:
         """Return latest OHLCV bars, retrying up to DATA_MAX_RETRIES times."""
@@ -798,9 +816,10 @@ class RegimeTrader:
             "circuit_breakers": active_breakers,
             "open_positions":   open_positions,
             "positions":        open_positions,
-            "signals":          list(self._recent_signals),
-            "updated_at":       datetime.now(tz=timezone.utc).isoformat(),
-            "last_updated":     datetime.now(tz=timezone.utc).isoformat(),
+            "signals":                list(self._recent_signals),
+            "btc_exit_failure_count": self._btc_exit_failure_count,
+            "updated_at":             datetime.now(tz=timezone.utc).isoformat(),
+            "last_updated":           datetime.now(tz=timezone.utc).isoformat(),
         }
 
         try:

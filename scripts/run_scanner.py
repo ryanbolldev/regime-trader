@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import ssl
 import sys
 import time
 from pathlib import Path
@@ -34,7 +35,7 @@ import pandas as pd
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
-from config.settings import SCANNER_MAX_WORKERS, SCANNER_TRAIN_BARS
+from config.settings import SCANNER_DATA_FEED, SCANNER_MAX_WORKERS, SCANNER_TRAIN_BARS
 from core.scanner.batch_trainer import BatchTrainer
 from core.scanner.options_enricher import OptionsEnricher
 from core.scanner.reporter import Reporter
@@ -69,6 +70,7 @@ def fetch_ohlcv(client, tickers: list[str], train_bars: int) -> dict[str, pd.Dat
                     timeframe=TimeFrame.Day,
                     start=start,
                     end=end,
+                    feed=SCANNER_DATA_FEED,
                 )
             )
             for ticker in chunk:
@@ -107,20 +109,28 @@ def main() -> None:
         log.critical("AlpacaClient init failed: %s", exc)
         sys.exit(1)
 
-    # ── 2. Universe filter ─────────────────────────────────────────────
-    universe_mgr = UniverseManager(client=client)
-    tickers      = universe_mgr.get_tradeable()
-    log.info("Universe after filters: %d tickers", len(tickers))
+    try:
+        # ── 2. Universe filter ─────────────────────────────────────────────
+        universe_mgr = UniverseManager(client=client)
+        tickers      = universe_mgr.get_tradeable()
+        log.info("Universe after filters: %d tickers", len(tickers))
 
-    # ── 3. Fetch OHLCV data ────────────────────────────────────────────
-    ohlcv_map = fetch_ohlcv(client, tickers, train_bars=SCANNER_TRAIN_BARS)
-    if not ohlcv_map:
-        log.critical("No OHLCV data retrieved — aborting.")
+        # ── 3. Fetch OHLCV data ────────────────────────────────────────────
+        ohlcv_map = fetch_ohlcv(client, tickers, train_bars=SCANNER_TRAIN_BARS)
+        if not ohlcv_map:
+            log.critical("No OHLCV data retrieved — aborting.")
+            sys.exit(1)
+
+        # ── 4. Batch HMM training ──────────────────────────────────────────
+        trainer = BatchTrainer(max_workers=SCANNER_MAX_WORKERS, train_bars=SCANNER_TRAIN_BARS)
+        results = trainer.run(list(ohlcv_map.keys()), ohlcv_map)
+
+    except (ssl.SSLError, ConnectionResetError) as exc:
+        log.error(
+            "[Scanner] SSL/network error — scanner must be run inside Docker on the VPS, "
+            "not locally on Windows: %s", exc
+        )
         sys.exit(1)
-
-    # ── 4. Batch HMM training ──────────────────────────────────────────
-    trainer = BatchTrainer(max_workers=SCANNER_MAX_WORKERS, train_bars=SCANNER_TRAIN_BARS)
-    results = trainer.run(list(ohlcv_map.keys()), ohlcv_map)
 
     # ── 5. Options enrichment ──────────────────────────────────────────
     enricher = OptionsEnricher(client=client, max_workers=SCANNER_MAX_WORKERS)

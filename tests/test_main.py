@@ -548,6 +548,88 @@ class TestRunLoop:
 
 
 # ---------------------------------------------------------------------------
+# TestBtcExitCircuitBreaker
+# ---------------------------------------------------------------------------
+
+class TestBtcExitCircuitBreaker:
+    """Tests for the BTC exit-failure counter and circuit breaker."""
+
+    def _setup_btc_exit(self, trader, mock_client, patch_modules):
+        """Pre-wire _process_btc so that an EXIT action reaches submit_crypto_order."""
+        action = MagicMock()
+        action.action = "EXIT"
+        action.size_usd = 1000.0
+        action.reason = "bear"
+
+        btc_strategy = MagicMock()
+        btc_strategy.get_target_allocation.return_value = 0.0
+        btc_strategy.get_action.return_value = action
+        trader._btc_strategy = btc_strategy
+
+        pos = MagicMock()
+        pos.symbol = "BTC/USD"
+        pos.qty = "0.02"
+        pos.avg_entry_price = "45000.0"
+        pos.market_value = "900.0"
+        pos.unrealized_pl = "-100.0"
+        mock_client.get_positions.return_value = [pos]
+
+        cycle_signal = MagicMock()
+        cycle_signal.composite_score = 0.3
+        mock_cycle_eng = MagicMock()
+        mock_cycle_eng.get_cycle_signal.return_value = cycle_signal
+
+        hmm_engine = MagicMock()
+        hmm_engine.is_uncertain.return_value = False
+        hmm_engine.is_confirmed.return_value = True
+
+        return MagicMock(return_value=mock_cycle_eng), hmm_engine
+
+    def test_btc_exit_failure_circuit_breaker_fires_at_3(
+        self, trader, mock_client, patch_modules
+    ):
+        mock_cycle_cls, hmm_engine = self._setup_btc_exit(
+            trader, mock_client, patch_modules
+        )
+        patch_modules["oe"].submit_crypto_order.side_effect = Exception("403 Forbidden")
+
+        with patch("core.cycle_engine.CycleEngine", mock_cycle_cls):
+            for _ in range(3):
+                trader._process_btc("BTC/USD", _synthetic_ohlcv(), 1, hmm_engine)
+
+        assert trader._btc_exit_failure_count == 3
+        alert_events = [c.args[0] for c in patch_modules["al"].send.call_args_list]
+        assert "critical_error" in alert_events
+
+    def test_btc_exit_failure_counter_resets_on_success(
+        self, trader, mock_client, patch_modules
+    ):
+        trader._btc_exit_failure_count = 2
+        mock_cycle_cls, hmm_engine = self._setup_btc_exit(
+            trader, mock_client, patch_modules
+        )
+        patch_modules["oe"].submit_crypto_order.return_value = MagicMock()
+
+        with patch("core.cycle_engine.CycleEngine", mock_cycle_cls):
+            trader._process_btc("BTC/USD", _synthetic_ohlcv(), 1, hmm_engine)
+
+        assert trader._btc_exit_failure_count == 0
+
+    def test_btc_exit_failure_count_in_dashboard_state(
+        self, trader, tmp_path, patch_modules
+    ):
+        import json
+        trader._btc_exit_failure_count = 2
+
+        with patch("main.LOG_DIR", tmp_path):
+            trader._write_dashboard_state()
+
+        state_file = tmp_path / "dashboard_state.json"
+        state = json.loads(state_file.read_text())
+        assert state["btc_exit_failure_count"] == 2
+
+
+# ---------------------------------------------------------------------------
 # TestMarketHoursGate
 # ---------------------------------------------------------------------------
 

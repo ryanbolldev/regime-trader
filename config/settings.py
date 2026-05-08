@@ -36,6 +36,10 @@ HMM_N_ITER  = 500             # max EM iterations per candidate model
 HMM_TOL     = 1e-5            # EM convergence tolerance (log-likelihood improvement)
 HMM_N_INIT  = 5               # random restarts per candidate state count; best BIC wins
 HMM_TRAIN_BARS = 504          # ~2 years of daily bars
+HMM_STALENESS_ZSCORE_LIVE        = 2.0   # std-deviation threshold for live trading staleness
+HMM_STALENESS_ZSCORE_WALKFORWARD = 2.5   # wider threshold for walk-forward contexts
+HMM_STALENESS_MIN_SAMPLE_BARS    = 10    # minimum calibration bars; below this, disable detection
+HMM_STALENESS_CALIBRATION_BARS   = 30    # tail window used to compute staleness mean/std
 
 # ---------------------------------------------------------------------------
 # Regime stability filters
@@ -166,6 +170,7 @@ SCANNER_SCORE_THRESHOLD     = 60          # minimum composite score to include
 SCANNER_TRAIN_BARS          = 252         # bars used to fit HMM per ticker
 SCANNER_OPTIONS_SPREAD_MAX  = 0.20        # max ATM bid-ask spread ($) for liquidity
 SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first deployment
+SCANNER_DATA_FEED           = 'iex'       # data feed for bar requests (paper account cannot use SIP)
 
 # S&P 500 + Nasdaq 100 combined universe (~200 most liquid tickers)
 SP500_NASDAQ100_UNIVERSE: list[str] = [

@@ -123,10 +123,11 @@ class Backtester:
 
     def run(
         self,
-        ohlcv_df:        pd.DataFrame,
-        initial_nav:     float = INITIAL_NAV,
-        audit_lookahead: bool  = True,
-        symbol:          str   = "",
+        ohlcv_df:          pd.DataFrame,
+        initial_nav:       float = INITIAL_NAV,
+        audit_lookahead:   bool  = True,
+        symbol:            str   = "",
+        disable_staleness: bool  = False,
     ) -> BacktestReport:
         """Run full walk-forward backtest on ohlcv_df.
 
@@ -154,7 +155,8 @@ class Backtester:
             is_df  = ohlcv_df.iloc[is_start:is_end]
             oos_df = ohlcv_df.iloc[is_end:oos_end]
             fold   = self.run_fold(is_df, oos_df, nav, audit_lookahead=audit_lookahead,
-                                   fold_idx=idx, symbol=symbol)
+                                   fold_idx=idx, symbol=symbol,
+                                   disable_staleness=disable_staleness)
             folds.append(fold)
             nav = float(fold.equity_curve.iloc[-1])
 
@@ -194,13 +196,14 @@ class Backtester:
 
     def run_fold(
         self,
-        is_df:           pd.DataFrame,
-        oos_df:          pd.DataFrame,
-        initial_nav:     float = INITIAL_NAV,
-        feature_fn:      Callable = compute,
-        audit_lookahead: bool  = True,
-        fold_idx:        int   = 0,
-        symbol:          str   = "",
+        is_df:             pd.DataFrame,
+        oos_df:            pd.DataFrame,
+        initial_nav:       float    = INITIAL_NAV,
+        feature_fn:        Callable = compute,
+        audit_lookahead:   bool     = True,
+        fold_idx:          int      = 0,
+        symbol:            str      = "",
+        disable_staleness: bool     = False,
     ) -> FoldResult:
         """Train HMM on is_df, simulate the strategy bar-by-bar over oos_df.
 
@@ -266,7 +269,8 @@ class Backtester:
                 bar_return = (close / prev_close) - 1.0
 
             # Regime prediction (forward-only)
-            regime_raw   = engine.predict_current(feat_row)
+            staleness_zscore = 999.0 if disable_staleness else None
+            regime_raw   = engine.predict_current(feat_row, staleness_zscore=staleness_zscore)
             is_uncertain = engine.is_uncertain()
             regime       = max(regime_raw, 0)
             confidence   = 0.7  # simplified; could derive from HMM posteriors

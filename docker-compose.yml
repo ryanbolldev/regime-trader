@@ -20,3 +20,19 @@ services:
     ports:
       - "8501:8501"
     restart: "no"
+
+  scanner:
+    build: .
+    # Runs at 06:00 ET (11:00 UTC) Mon–Fri via cron inside the container.
+    # Requires supercronic (or cron) in the Docker image; the entrypoint
+    # writes a crontab and then exec's supercronic.
+    command: >
+      sh -c "echo '0 11 * * 1-5 python /app/scripts/run_scanner.py >> /app/logs/scanner.log 2>&1'
+             > /etc/cron.d/scanner &&
+             chmod 0644 /etc/cron.d/scanner &&
+             crontab /etc/cron.d/scanner &&
+             cron -f"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    restart: unless-stopped

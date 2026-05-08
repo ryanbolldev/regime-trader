@@ -187,7 +187,7 @@ class TestSubmitCryptoOrder:
         client.get_orders.return_value = []
         order_executor.submit_crypto_order("BTC/USD", "buy", 500.0, client)
         client.submit_order_notional.assert_called_once_with(
-            symbol="BTC/USD", notional_usd=500.0, side="buy"
+            symbol="BTC/USD", notional_usd=500.0, side="buy", time_in_force="gtc"
         )
 
     def test_dedup_skips_if_open_order_exists(self):
@@ -213,3 +213,27 @@ class TestSubmitCryptoOrder:
         client.get_orders.return_value = []   # no open orders
         order_executor.submit_crypto_order("BTC/USD", "sell", 500.0, client)
         client.submit_order_notional.assert_called_once()
+
+    def test_crypto_sell_uses_qty_when_provided(self):
+        """When qty is provided for a sell, submit_order(qty=...) is used instead of notional."""
+        client = MagicMock()
+        client.get_orders.return_value = []
+        order_executor.submit_crypto_order(
+            "BTC/USD", "sell", 900.0, client, qty=0.02
+        )
+        client.submit_order.assert_called_once_with(
+            symbol="BTC/USD", qty=0.02, side="sell", order_type="market", time_in_force="ioc"
+        )
+        client.submit_order_notional.assert_not_called()
+
+    def test_crypto_buy_still_uses_notional(self):
+        """Buy orders always use submit_order_notional with gtc, never ioc."""
+        client = MagicMock()
+        client.get_orders.return_value = []
+        order_executor.submit_crypto_order(
+            "BTC/USD", "buy", 500.0, client, qty=0.01
+        )
+        client.submit_order_notional.assert_called_once_with(
+            symbol="BTC/USD", notional_usd=500.0, side="buy", time_in_force="gtc"
+        )
+        client.submit_order.assert_not_called()

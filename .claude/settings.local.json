@@ -57,7 +57,21 @@
       "Bash(python -m pytest tests/test_wheel_strategy.py::TestIVRankGate -v --tb=short)",
       "Bash(python -m pytest tests/test_lag_analysis.py -v --tb=short)",
       "Bash(grep -E \"^=|^Total|^Crash|^Mean|^Worst|^By|^  [0-9]|^======|^$\")",
-      "Bash(python -W ignore -c ' *)"
+      "Bash(python -W ignore -c ' *)",
+      "Bash(python -m pytest tests/test_scanner.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_scanner.py -q --tb=short)",
+      "Bash(python scripts/run_scanner.py)",
+      "Bash(python -m pytest tests/test_scanner.py::TestBatchTrainerRateLimits -v --tb=short)",
+      "Bash(python -m pytest tests/test_order_executor.py tests/test_main.py -q)",
+      "Bash(python -m pytest tests/test_walk_forward.py -v --tb=short)",
+      "Bash(python scripts/run_walk_forward.py)",
+      "Bash(python -m pytest tests/test_walk_forward.py -x -q)",
+      "Bash(python -m pytest tests/test_order_executor.py -x -q)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'scripts'\\); import importlib.util; spec=importlib.util.spec_from_file_location\\('run_scanner','scripts/run_scanner.py'\\); m=importlib.util.module_from_spec\\(spec\\); spec.loader.exec_module\\(m\\); print\\('fetch_ohlcv' in dir\\(m\\)\\)\")",
+      "Bash(python -m pytest tests/test_scanner.py -x -q)",
+      "Bash(python -m pytest tests/test_hmm_engine.py::TestStalenessThresholdConfigurable -v -q)",
+      "Bash(python -m pytest tests/test_walk_forward.py::TestStalenessWarningAbove50Pct tests/test_walk_forward.py::TestStalenessWidening -v -q)",
+      "Bash(make walkforward *)"
     ]
   }
 }
