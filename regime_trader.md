@@ -17,19 +17,25 @@ This document is the authoritative technical reference for the Regime Trader sys
    - [Equity Regime Strategies](#equity-regime-strategies)
    - [BTC Spot Strategy](#btc-spot-strategy)
    - [Wheel Options Strategy](#wheel-options-strategy)
-6. [Risk Management & Safety Protocols](#risk-management--safety-protocols)
+6. [Nightly Scanner Pipeline](#nightly-scanner-pipeline)
+   - [UniverseManager](#universemanager)
+   - [BatchTrainer](#batchtrainer)
+   - [OptionsEnricher](#optionsenricher)
+   - [Scorer](#scorer)
+   - [Reporter](#reporter)
+7. [Risk Management & Safety Protocols](#risk-management--safety-protocols)
    - [Circuit Breakers](#circuit-breakers)
    - [Position Sizing](#position-sizing)
    - [Market Hours Gate](#market-hours-gate)
    - [Live Account Mode](#live-account-mode)
    - [Lockfile Guard](#lockfile-guard)
    - [Credential Security](#credential-security)
-7. [Order Execution](#order-execution)
-8. [Real-Time Dashboard](#real-time-dashboard)
-9. [Alerts & Monitoring](#alerts--monitoring)
-10. [Broker Integration](#broker-integration)
-11. [Anti-Lookahead-Bias Guarantees](#anti-lookahead-bias-guarantees)
-12. [Configuration Reference](#configuration-reference)
+8. [Order Execution](#order-execution)
+9. [Real-Time Dashboard](#real-time-dashboard)
+10. [Alerts & Monitoring](#alerts--monitoring)
+11. [Broker Integration](#broker-integration)
+12. [Anti-Lookahead-Bias Guarantees](#anti-lookahead-bias-guarantees)
+13. [Configuration Reference](#configuration-reference)
 
 ---
 
@@ -179,6 +185,19 @@ Raw HMM output can flicker between adjacent states on noisy bars. Two filters pr
 | **Flicker suppressor** | `FLICKER_THRESHOLD = 4` in `FLICKER_WINDOW = 20` | `is_uncertain()` returns True if regime changed >4 times in the last 20 bars |
 
 When `is_uncertain()` is True, position sizes are scaled by `UNCERTAINTY_ALLOCATION_FACTOR = 0.60`, reducing all new exposure by 40%.
+
+#### Staleness detection
+
+The engine monitors whether the live price distribution has drifted significantly away from the distribution seen during training. If the current observation is more than `staleness_zscore` standard deviations from the calibration mean, the engine flags the model as stale.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HMM_STALENESS_ZSCORE_LIVE` | 2.0 | Z-score threshold for live trading |
+| `HMM_STALENESS_ZSCORE_WALKFORWARD` | 2.5 | Wider threshold used in walk-forward contexts |
+| `HMM_STALENESS_MIN_SAMPLE_BARS` | 10 | Minimum bars before detection activates |
+| `HMM_STALENESS_CALIBRATION_BARS` | 30 | Trailing window used to compute mean/std |
+
+When the model is stale, `predict_current()` returns regime `-1` (unconfirmed), blocking trading exactly as the confirmation gate does. Staleness detection can be disabled per-call (used by the backtester during walk-forward folds to avoid false positives from synthetic data splits).
 
 #### Anti-lookahead guarantee
 
@@ -428,6 +447,180 @@ CASH ──(sell put)──► PUT_SOLD ──(assigned / early close)──► 
 2. **50% of max profit** captured (`WHEEL_EARLY_CLOSE_PROFIT_PCT = 0.50`)
 3. **Loss exceeds 200%** of premium received (`WHEEL_EARLY_CLOSE_LOSS_PCT = 2.00`)
 4. **<7 DTE with a loss** (`WHEEL_GAMMA_RISK_DTE = 7`) — gamma risk closes the position
+
+---
+
+## Nightly Scanner Pipeline
+
+**Entry point:** `scripts/run_scanner.py`  
+**Output:** `logs/scanner/watchlist_YYYY-MM-DD.{json,md}` + optional Telegram alert
+
+The scanner runs as a standalone script (typically via cron or task scheduler after market close). It screens a configurable equity universe, fits an HMM per ticker in parallel, enriches results with IV rank, applies composite scoring, and writes a ranked watchlist.
+
+```
+UniverseManager  →  BatchTrainer  →  OptionsEnricher  →  Scorer  →  Reporter
+  (filter)           (HMM fit)        (IV rank)          (score)    (write/alert)
+```
+
+### UniverseManager
+
+**File:** `core/scanner/universe.py`
+
+Filters the configured ticker list down to tradeable candidates before expensive HMM fitting begins. Two sequential filters are applied:
+
+| Filter | Threshold | Exclusion reason |
+|--------|-----------|-----------------|
+| Average daily volume | ≥ `SCANNER_MIN_VOLUME` (1 M shares) | `low_volume` |
+| Average close price | ≥ `SCANNER_MIN_PRICE` ($10) | `low_price` |
+
+Bars are fetched from Alpaca in chunks using the `SCANNER_DATA_FEED` feed (defaults to `'iex'` for paper accounts, which cannot access the SIP feed). The response is a Pydantic `BarSet` — ticker data is accessed via bracket notation (`resp[ticker]`) rather than iteration, because `BarSet.__iter__` yields Pydantic field-value pairs, not per-symbol data.
+
+### BatchTrainer
+
+**File:** `core/scanner/batch_trainer.py`
+
+Fits one `HMMEngine` per ticker in a `ThreadPoolExecutor` (up to `SCANNER_MAX_WORKERS` threads). Each fit follows a train/holdout split to produce a meaningful out-of-sample regime duration:
+
+```
+Total bars available: SCANNER_TRAIN_BARS (252)
+Training window:      bars[:-SCANNER_DURATION_HOLDOUT_BARS]   (~212 bars)
+Holdout window:       bars[-SCANNER_DURATION_HOLDOUT_BARS:]    (40 bars)
+
+HMMEngine.fit() called on training window only.
+Regime duration counted by iterating holdout bars in sequence
+using predict_current() — forward algorithm, one bar at a time.
+```
+
+Using in-sample predictions for duration produced blanket 250-bar durations (trivially long because the model was evaluated on data it was trained on). The holdout split produces real variation: durations naturally range 0–40 bars, reflecting genuine regime persistence.
+
+`TickerResult` fields produced per ticker:
+
+| Field | Description |
+|-------|-------------|
+| `ticker` | Symbol |
+| `fit_failed` | True if HMMEngine.fit() raised an exception |
+| `current_regime` | Regime label 0–4 (-1 if unconfirmed) |
+| `regime_duration_bars` | Consecutive holdout bars in current regime |
+| `bic_score` | BIC of the selected HMM (lower = better) |
+| `converged` | Whether EM converged |
+| `convergence_warning` | True if converged with degraded confidence |
+| `iv_rank` | Populated by OptionsEnricher (initially None) |
+| `spread` | ATM bid-ask spread in dollars |
+| `low_liquidity_options` | True if spread > `SCANNER_OPTIONS_SPREAD_MAX` |
+| `high_iv_event_risk` | True if IV rank > `SCANNER_MAX_IV_RANK` |
+
+### OptionsEnricher
+
+**File:** `core/scanner/options_enricher.py`  
+**IV source:** `broker/alpaca_client.py → get_iv_rank()`
+
+Attaches IV rank to each `TickerResult`. IV rank is computed as:
+
+```
+Current IV  = median implied volatility of 30–45 DTE options (ATM ± 2 strikes)
+Historical  = 20-day rolling realized volatility over a 252-bar window
+IV rank     = current IV / 252-day max realized vol × 100
+```
+
+`get_iv_rank()` returns `Optional[float]`:
+- Returns `None` on any failure: no options data, KeyError from BarSet, insufficient history, or paper account without options permissions
+- Never returns a default — a `None` result propagates through scoring as "IV data unavailable"
+
+Tickers with `iv_rank > SCANNER_MAX_IV_RANK` (70) are flagged `high_iv_event_risk = True` and excluded from scoring entirely (likely earnings or binary event risk).
+
+Tickers with `spread > SCANNER_OPTIONS_SPREAD_MAX` ($0.20) are flagged `low_liquidity_options = True`; they remain scored but wheel-type strategies are replaced with `EQUITY_ONLY`.
+
+### Scorer
+
+**File:** `core/scanner/scorer.py`
+
+Produces a composite `ScoredTicker` for each eligible `TickerResult`. Tickers with `fit_failed=True` or `current_regime == -1` are silently skipped.
+
+#### Composite score components (sum = 100%)
+
+| Component | Weight | Signal |
+|-----------|--------|--------|
+| Regime alignment | 40% | Regime mapped to LONG or SHORT score (0–100) |
+| Confirmation quality | 20% | 100 = converged clean; 50 = convergence warning; 20 = not converged |
+| Regime duration | 15% | `min(duration_bars / 20, 1.0) × 100` — saturates at 20 bars |
+| IV rank fit | 15% | LONG: `100 - iv_rank`; SHORT: `iv_rank`; None: see below |
+| Model quality | 10% | 80 if converged; 50 if not; 0 if BIC = ∞ |
+
+#### IV unavailable weight redistribution
+
+When `iv_rank is None` (Alpaca options data unavailable), the 15% IV weight is redistributed rather than penalising the ticker:
+
+```
+Regime weight:       40% + 7.5% = 47.5%
+Confirmation weight: 20% + 7.5% = 27.5%
+Duration weight:     15%
+IV weight:           0%
+Quality weight:      10%
+Total:               100%
+```
+
+This ensures tickers still receive a meaningful score even when options data is unavailable, rather than being artificially deflated by a missing component.
+
+#### Regime score maps
+
+| Regime | LONG score | SHORT score |
+|--------|-----------|------------|
+| 0 Crash | 0 | 95 |
+| 1 Bear | 20 | 80 |
+| 2 Neutral | 50 | 50 |
+| 3 Bull | 90 | 10 |
+| 4 Euphoria | 70 | 30 |
+
+#### Strategy mapping
+
+`get_suggested_strategy(direction, iv_rank, current_regime)` maps the final direction and IV environment to an actionable strategy label.
+
+**When IV data is available:**
+
+| Direction | IV rank | Strategy |
+|-----------|---------|----------|
+| LONG | ≥ 50 | `CASH_SECURED_PUT` |
+| LONG | < 50 | `BUY_EQUITY` |
+| SHORT | ≥ 50 | `COVERED_CALL` |
+| SHORT | < 50 | `BEAR_SPREAD` |
+| NEUTRAL | ≥ 60 | `IRON_CONDOR` |
+| NEUTRAL | < 60 | `WHEEL` |
+
+**When IV data is unavailable (regime-only fallback):**
+
+| Regime | LONG strategy | SHORT strategy |
+|--------|--------------|---------------|
+| 0 Crash | `AVOID` | `PUT_DEBIT_SPREAD` |
+| 1 Bear | `UNDERWEIGHT` | `UNDERWEIGHT` |
+| 2 Neutral | `WATCH` | `WATCH` |
+| 3 Bull | `LONG_EQUITY` | `AVOID_SHORT` |
+| 4 Euphoria | `REDUCE_LONG` | `COVERED_CALL` |
+
+If a ticker has `low_liquidity_options = True` and the strategy contains `WHEEL`, it is overridden to `EQUITY_ONLY`.
+
+### Reporter
+
+**File:** `core/scanner/reporter.py`
+
+Writes results to `logs/scanner/` and fires an optional alert.
+
+**Outputs:**
+
+| File | Format | Contents |
+|------|--------|----------|
+| `watchlist_YYYY-MM-DD.json` | JSON | Full scored ticker list, metadata, score distribution, exclusion counts |
+| `watchlist_YYYY-MM-DD.md` | Markdown | Human-readable briefing with score distribution histogram and exclusion breakdown |
+
+**Paper validation period:** On first run, `deployment_date.txt` is written to `logs/scanner/`. For the next `SCANNER_PAPER_ONLY_DAYS` (30) calendar days, every Markdown file and Telegram alert includes a prominent banner:
+
+```
+⚠️  PAPER VALIDATION PERIOD — Day N/30
+Scanner output is for research only. Do not deploy real capital until
+the 30-day paper validation window closes and regime scores have been
+verified against actual price outcomes.
+```
+
+The `send_alert()` method fires a `scanner_briefing` event via `core.alerts`, listing the top 5 LONG and SHORT candidates. Alert failures are logged as warnings and swallowed — they do not abort the scanner run.
 
 ---
 
@@ -693,6 +886,7 @@ Every call to `alerts.send()` POSTs the following JSON to `ALERT_WEBHOOK_URL`:
 | `submit_order_notional()` | Market crypto order (dollar-amount, GTC) |
 | `cancel_order()` | Cancel by order ID |
 | `get_option_chain()` | Full options chain with greeks and quotes |
+| `get_iv_rank()` | IV rank for a symbol (`Optional[float]`; `None` on any failure) |
 | `is_market_open()` | Alpaca clock endpoint |
 
 ### Error taxonomy
@@ -827,3 +1021,29 @@ All parameters live in `config/settings.py`. Never put credentials here.
 |-----------|---------|-------------|
 | `ALERT_COOLDOWN_SECONDS` | 300 | Per-symbol per-event suppression window |
 | `IS_EQUITY_HOURS_ONLY` | True | Gate equity orders to market hours |
+
+### HMM staleness detection
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HMM_STALENESS_ZSCORE_LIVE` | 2.0 | Z-score threshold for live trading staleness |
+| `HMM_STALENESS_ZSCORE_WALKFORWARD` | 2.5 | Wider threshold for walk-forward contexts |
+| `HMM_STALENESS_MIN_SAMPLE_BARS` | 10 | Minimum bars before detection activates |
+| `HMM_STALENESS_CALIBRATION_BARS` | 30 | Trailing window used to compute mean/std |
+
+### Scanner
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `SCANNER_MIN_VOLUME` | 1_000_000 | Minimum avg daily volume to qualify |
+| `SCANNER_MIN_PRICE` | 10.0 | Minimum share price to qualify |
+| `SCANNER_MAX_WORKERS` | 5 | Parallel worker threads for HMM fitting |
+| `SCANNER_BATCH_SLEEP_SECS` | 0.5 | Sleep between worker batches to throttle API |
+| `SCANNER_MAX_RETRIES` | 3 | Per-ticker retries on HTTP 429 before exclusion |
+| `SCANNER_SCORE_THRESHOLD` | 60 | Minimum composite score to appear in watchlist |
+| `SCANNER_TRAIN_BARS` | 252 | Bars used to fit HMM per ticker (~1 year) |
+| `SCANNER_DURATION_HOLDOUT_BARS` | 40 | Out-of-sample bars for regime duration counting |
+| `SCANNER_OPTIONS_SPREAD_MAX` | 0.20 | Max ATM bid-ask spread ($) for options liquidity |
+| `SCANNER_MAX_IV_RANK` | 70 | IV rank ceiling; tickers above this are excluded |
+| `SCANNER_PAPER_ONLY_DAYS` | 30 | Paper-validation window after first deployment |
+| `SCANNER_DATA_FEED` | `'iex'` | Alpaca data feed (paper accounts require `'iex'`) |

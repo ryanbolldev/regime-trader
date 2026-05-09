@@ -7,10 +7,11 @@ A Python algorithmic trading bot that uses a Hidden Markov Model (HMM) to classi
 - **HMM regime classification** across 5 market states (crash → euphoria)
 - **BTC spot trading** with 60-day cycle overlay and regime-tiered allocation
 - **Wheel strategy** (cash-secured puts + covered calls) for income generation on MSTR and CVX
+- **Nightly scanner** that screens a configurable equity universe, scores each ticker via HMM + IV rank, and writes a ranked watchlist with Telegram alert
 - **Multi-layer risk management**: per-trade caps, intraday/weekly/peak drawdown circuit breakers
 - **Live account mode** with tighter caps, equity-only BTC trading, and mandatory second-validation logging
 - **Alerts** via email (SMTP) and webhook (Slack, etc.)
-- **695+ passing tests** with full mock coverage — no real HTTP calls in test suite
+- **900 passing tests** with full mock coverage — no real HTTP calls in test suite
 
 ## Market Regimes
 
@@ -49,6 +50,9 @@ python main.py
 
 # 7. Launch the dashboard (separate terminal)
 streamlit run dashboard/app.py
+
+# 8. Run the nightly scanner (produces logs/scanner/watchlist_YYYY-MM-DD.{json,md})
+python scripts/run_scanner.py
 ```
 
 ## Credentials (.env)
@@ -94,12 +98,20 @@ regime_trader/
 │   ├── order_executor.py      # Signal → broker order translation
 │   ├── position_tracker.py    # Open positions, P&L, and wheel state
 │   ├── market_data.py         # Historical and real-time OHLCV feeds
-│   └── alerts.py              # Email / webhook notifications with cooldown
+│   ├── alerts.py              # Email / webhook notifications with cooldown
+│   └── scanner/
+│       ├── universe.py        # Universe filtering (volume, price, liquidity)
+│       ├── batch_trainer.py   # Parallel HMM fitting with out-of-sample duration
+│       ├── options_enricher.py# IV rank computation (Optional[float], None on failure)
+│       ├── scorer.py          # Composite LONG/SHORT scoring + strategy mapping
+│       └── reporter.py        # JSON/Markdown watchlist writer + Telegram alert
 ├── broker/
 │   └── alpaca_client.py       # Alpaca REST API wrapper (paper & live)
 ├── dashboard/
 │   └── app.py                 # Streamlit monitoring UI
-├── tests/                     # One test file per module — 695+ tests
+├── scripts/
+│   └── run_scanner.py         # Nightly scanner entry point
+├── tests/                     # One test file per module — 900 tests
 ├── main.py                    # Orchestrator: startup, main loop, shutdown
 ├── requirements.txt
 ├── .env.example
@@ -123,4 +135,19 @@ regime_trader/
 | `BTC_MAX_ALLOCATION` | `0.75` | Hard cap on BTC exposure |
 | `CYCLE_COMPOSITE_THRESHOLD` | `0.65` | Cycle score required for tier boost |
 
-For full technical documentation including signal detection, cycle logic, and safety protocols, see [regime_trader.md](regime_trader.md).
+### Scanner
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `SCANNER_MIN_VOLUME` | `1_000_000` | Minimum avg daily volume to qualify |
+| `SCANNER_MIN_PRICE` | `10.0` | Minimum share price to qualify |
+| `SCANNER_TRAIN_BARS` | `252` | Bars used to fit HMM per ticker (~1 year) |
+| `SCANNER_DURATION_HOLDOUT_BARS` | `40` | Out-of-sample bars for regime duration counting |
+| `SCANNER_SCORE_THRESHOLD` | `60` | Minimum composite score to include in watchlist |
+| `SCANNER_MAX_IV_RANK` | `70` | IV rank ceiling; tickers above this are excluded |
+| `SCANNER_OPTIONS_SPREAD_MAX` | `0.20` | Max ATM bid-ask spread ($) for options liquidity |
+| `SCANNER_PAPER_ONLY_DAYS` | `30` | Paper-validation window after first deployment |
+| `SCANNER_MAX_WORKERS` | `5` | Parallel worker threads for HMM fitting |
+| `SCANNER_DATA_FEED` | `'iex'` | Alpaca data feed (paper accounts require `'iex'`) |
+
+For full technical documentation including signal detection, cycle logic, scanner pipeline, and safety protocols, see [regime_trader.md](regime_trader.md).
