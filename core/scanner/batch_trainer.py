@@ -34,6 +34,7 @@ import pandas as pd
 
 from config.settings import (
     SCANNER_BATCH_SLEEP_SECS,
+    SCANNER_DURATION_HOLDOUT_BARS,
     SCANNER_MAX_RETRIES,
     SCANNER_MAX_WORKERS,
     SCANNER_TRAIN_BARS,
@@ -77,15 +78,17 @@ class BatchTrainer:
 
     def __init__(
         self,
-        max_workers: int   = SCANNER_MAX_WORKERS,
-        train_bars:  int   = SCANNER_TRAIN_BARS,
-        batch_sleep: float = SCANNER_BATCH_SLEEP_SECS,
-        max_retries: int   = SCANNER_MAX_RETRIES,
+        max_workers:      int   = SCANNER_MAX_WORKERS,
+        train_bars:       int   = SCANNER_TRAIN_BARS,
+        batch_sleep:      float = SCANNER_BATCH_SLEEP_SECS,
+        max_retries:      int   = SCANNER_MAX_RETRIES,
+        duration_holdout: int   = SCANNER_DURATION_HOLDOUT_BARS,
     ) -> None:
-        self._max_workers = max_workers
-        self._train_bars  = train_bars
-        self._batch_sleep = batch_sleep
-        self._max_retries = max_retries
+        self._max_workers      = max_workers
+        self._train_bars       = train_bars
+        self._batch_sleep      = batch_sleep
+        self._max_retries      = max_retries
+        self._duration_holdout = duration_holdout
 
         self.total_retries: int = 0
         self._retry_lock        = threading.Lock()
@@ -189,21 +192,29 @@ class BatchTrainer:
         return _failed(ticker, "rate_limit_exhausted")  # pragma: no cover
 
     def _train_one(self, ticker: str, df: pd.DataFrame) -> TickerResult:
-        """Fit HMMEngine on the most recent train_bars of df."""
+        """Fit HMMEngine on training bars; count duration on out-of-sample holdout."""
         df = df.tail(self._train_bars).copy()
+
+        # Split: fit on all-but-holdout, count duration on the trailing holdout only.
+        # Ensures regime_duration_bars reflects genuine recent out-of-sample persistence
+        # rather than trivially recounting the training data's own dominant label.
+        _min_train = 30
+        holdout  = min(self._duration_holdout, max(0, len(df) - _min_train))
+        train_df   = df.iloc[:-holdout] if holdout > 0 else df
+        holdout_df = df.iloc[-holdout:] if holdout > 0 else df.iloc[0:0]
 
         engine = HMMEngine()
         try:
-            engine.fit(df)
+            engine.fit(train_df)
         except Exception as exc:
             log.warning("HMMEngine.fit failed for %s: %s", ticker, exc)
             return _failed(ticker, str(exc))
 
-        # Walk forward bar-by-bar; pass each row as a Series (no lookahead)
+        # Walk forward on holdout bars only — pure out-of-sample
         regimes: list[int] = []
         try:
-            for i in range(len(df)):
-                r = engine.predict_current(df.iloc[i])
+            for i in range(len(holdout_df)):
+                r = engine.predict_current(holdout_df.iloc[i])
                 regimes.append(r)
         except Exception:
             pass

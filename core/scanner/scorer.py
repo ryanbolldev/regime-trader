@@ -103,7 +103,7 @@ class Scorer:
                 "SHORT"
             )
 
-            strategy = get_suggested_strategy(direction, r.iv_rank)
+            strategy = get_suggested_strategy(direction, r.iv_rank, r.current_regime)
             if r.low_liquidity_options and "WHEEL" in strategy:
                 strategy = "EQUITY_ONLY"
 
@@ -268,9 +268,42 @@ _REGIME_NAMES: dict[int, str] = {
 }
 
 
-def get_suggested_strategy(direction: str, iv_rank: Optional[float]) -> str:
-    """Map direction + IV environment to a strategy name."""
-    iv = iv_rank if iv_rank is not None else 50.0
+_REGIME_ONLY_LONG_STRATEGY: dict[int, str] = {
+    0: "AVOID",           # crash — no long entries
+    1: "UNDERWEIGHT",     # bear — reduce exposure
+    2: "WATCH",           # neutral — no strong signal
+    3: "LONG_EQUITY",     # bull — buy shares
+    4: "REDUCE_LONG",     # euphoria — trim longs
+}
+
+_REGIME_ONLY_SHORT_STRATEGY: dict[int, str] = {
+    0: "PUT_DEBIT_SPREAD",  # crash — defined risk directional
+    1: "UNDERWEIGHT",       # bear — reduce/avoid longs
+    2: "WATCH",             # neutral — no strong signal
+    3: "AVOID_SHORT",       # bull — no short entries
+    4: "COVERED_CALL",      # euphoria — sell premium into strength
+}
+
+
+def get_suggested_strategy(
+    direction: str,
+    iv_rank: Optional[float],
+    current_regime: int = 2,
+) -> str:
+    """Map direction + IV environment to a strategy name.
+
+    When iv_rank is None, returns a regime-only directional strategy that
+    requires no IV data for sizing.  When iv_rank is provided, uses the
+    standard IV-tiered logic unchanged.
+    """
+    if iv_rank is None:
+        if direction == "LONG":
+            return _REGIME_ONLY_LONG_STRATEGY.get(current_regime, "WATCH")
+        if direction == "SHORT":
+            return _REGIME_ONLY_SHORT_STRATEGY.get(current_regime, "WATCH")
+        return "WATCH"
+
+    iv = float(iv_rank)
 
     if direction == "LONG":
         if iv >= 50:

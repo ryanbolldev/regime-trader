@@ -186,6 +186,22 @@ class TestBatchTrainer:
         results = trainer.run(tickers, ohlcv)
         assert len(results) == 3
 
+    def test_duration_capped_at_holdout_bars(self):
+        """regime_duration_bars never exceeds duration_holdout — it is out-of-sample only."""
+        holdout = 10
+        ohlcv   = {"SPY": _make_ohlcv(300)}
+        trainer = BatchTrainer(max_workers=1, train_bars=200, duration_holdout=holdout)
+        results = trainer.run(["SPY"], ohlcv)
+        r = results[0]
+        if not r.fit_failed:
+            assert r.regime_duration_bars <= holdout
+
+    def test_duration_holdout_default_from_settings(self):
+        """Default duration_holdout comes from SCANNER_DURATION_HOLDOUT_BARS."""
+        from config.settings import SCANNER_DURATION_HOLDOUT_BARS
+        trainer = BatchTrainer()
+        assert trainer._duration_holdout == SCANNER_DURATION_HOLDOUT_BARS
+
 
 # ---------------------------------------------------------------------------
 # 3. OptionsEnricher
@@ -360,9 +376,26 @@ class TestGetSuggestedStrategy:
         assert get_suggested_strategy("NEUTRAL", iv_rank=75.0) == "IRON_CONDOR"
 
     def test_none_iv_rank_handled(self):
-        # Should not raise; defaults iv to 50.0
-        result = get_suggested_strategy("LONG", iv_rank=None)
-        assert result in ("BUY_EQUITY", "CASH_SECURED_PUT")
+        # With bull regime (3) and no IV, falls back to regime-only strategy
+        result = get_suggested_strategy("LONG", iv_rank=None, current_regime=3)
+        assert result == "LONG_EQUITY"
+
+    def test_strategy_none_iv_long_bull(self):
+        assert get_suggested_strategy("LONG", iv_rank=None, current_regime=3) == "LONG_EQUITY"
+
+    def test_strategy_none_iv_short_crash(self):
+        assert get_suggested_strategy("SHORT", iv_rank=None, current_regime=0) == "PUT_DEBIT_SPREAD"
+
+    def test_strategy_none_iv_long_crash(self):
+        assert get_suggested_strategy("LONG", iv_rank=None, current_regime=0) == "AVOID"
+
+    def test_strategy_real_iv_uses_existing_logic(self):
+        # regime parameter ignored when iv_rank is provided
+        assert get_suggested_strategy("LONG", iv_rank=45.0, current_regime=3) == "BUY_EQUITY"
+        assert get_suggested_strategy("LONG", iv_rank=55.0, current_regime=3) == "CASH_SECURED_PUT"
+
+    def test_strategy_none_iv_euphoria_short(self):
+        assert get_suggested_strategy("SHORT", iv_rank=None, current_regime=4) == "COVERED_CALL"
 
 
 # ---------------------------------------------------------------------------

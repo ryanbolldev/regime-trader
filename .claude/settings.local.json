@@ -80,7 +80,9 @@
       "Bash(python -m pytest tests/test_scanner.py::TestUniverseManager -v)",
       "Bash(python -m pytest tests/test_scanner.py::TestIVDataAvailability -v)",
       "Bash(python -m pytest tests/test_scanner.py::TestPaperValidationBanner -v)",
-      "Bash(python -m pytest tests/test_scanner.py -q)"
+      "Bash(python -m pytest tests/test_scanner.py -q)",
+      "Bash(python -m pytest tests/test_scanner.py::TestBatchTrainer -v)",
+      "Bash(python -m pytest tests/test_scanner.py::TestGetSuggestedStrategy -v)"
     ]
   }
 }

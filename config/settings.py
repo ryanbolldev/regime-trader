@@ -167,6 +167,7 @@ SCANNER_BATCH_SLEEP_SECS    = 0.5         # sleep between worker batches to thro
 SCANNER_MAX_RETRIES         = 3           # per-ticker retries on HTTP 429 before exclusion
 SCANNER_SCORE_THRESHOLD     = 60          # minimum composite score to include
 SCANNER_TRAIN_BARS          = 252         # bars used to fit HMM per ticker
+SCANNER_DURATION_HOLDOUT_BARS = 40        # out-of-sample bars for regime duration counting
 SCANNER_OPTIONS_SPREAD_MAX  = 0.20        # max ATM bid-ask spread ($) for liquidity
 SCANNER_MAX_IV_RANK         = 70          # IV rank ceiling; tickers above this are excluded
 SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first deployment
