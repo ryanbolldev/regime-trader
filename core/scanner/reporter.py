@@ -43,6 +43,7 @@ _EXCLUSION_LABELS: dict[str, str] = {
     "fit_failed":            "HMM fit failure",
     "rate_limit_exhausted":  "Rate limit exhausted",
     "low_liquidity_options": "Low liquidity options",
+    "high_iv_event_risk":    "High IV event risk (>70)",
 }
 _EXCLUSION_KEY_ORDER = list(_EXCLUSION_LABELS)
 

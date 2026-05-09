@@ -18,7 +18,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from config.settings import SCANNER_MAX_WORKERS, SCANNER_OPTIONS_SPREAD_MAX
+from config.settings import SCANNER_MAX_IV_RANK, SCANNER_MAX_WORKERS, SCANNER_OPTIONS_SPREAD_MAX
 from core.scanner.batch_trainer import TickerResult
 
 log = logging.getLogger(__name__)
@@ -65,10 +65,11 @@ class OptionsEnricher:
             for fut in as_completed(futures):
                 result = futures[fut]
                 try:
-                    iv_rank, spread, low_liq = fut.result()
+                    iv_rank, spread, low_liq, high_iv = fut.result()
                     result.iv_rank              = iv_rank
                     result.spread               = spread
                     result.low_liquidity_options = low_liq
+                    result.high_iv_event_risk   = high_iv
                 except Exception as exc:
                     log.warning("OptionsEnricher: error for %s (skipped): %s", result.ticker, exc)
 
@@ -85,15 +86,22 @@ class OptionsEnricher:
 
     def _enrich_one(
         self, ticker: str
-    ) -> tuple[Optional[float], Optional[float], bool]:
-        """Return (iv_rank, atm_spread, low_liquidity_options)."""
-        iv_rank = None
-        spread  = None
-        low_liq = False
+    ) -> tuple[Optional[float], Optional[float], bool, bool]:
+        """Return (iv_rank, atm_spread, low_liquidity_options, high_iv_event_risk)."""
+        iv_rank  = None
+        spread   = None
+        low_liq  = False
+        high_iv  = False
 
         # IV rank via existing AlpacaClient method
         try:
             iv_rank = self._client.get_iv_rank(ticker)
+            if iv_rank is not None and iv_rank > SCANNER_MAX_IV_RANK:
+                high_iv = True
+                log.info(
+                    "[SCANNER] %s flagged high_iv_event_risk — IV rank %.1f > %d",
+                    ticker, iv_rank, SCANNER_MAX_IV_RANK,
+                )
         except Exception as exc:
             log.debug("OptionsEnricher [%s]: iv_rank failed: %s", ticker, exc)
 
@@ -114,10 +122,10 @@ class OptionsEnricher:
             log.debug("OptionsEnricher [%s]: spread fetch failed: %s", ticker, exc)
 
         log.debug(
-            "OptionsEnricher [%s]: iv_rank=%s spread=%s low_liq=%s",
-            ticker, iv_rank, spread, low_liq,
+            "OptionsEnricher [%s]: iv_rank=%s spread=%s low_liq=%s high_iv=%s",
+            ticker, iv_rank, spread, low_liq, high_iv,
         )
-        return iv_rank, spread, low_liq
+        return iv_rank, spread, low_liq, high_iv
 
 
 def _safe_date_days(expiration: str, today: datetime.date) -> int:

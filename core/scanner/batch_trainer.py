@@ -61,6 +61,7 @@ class TickerResult:
     iv_rank:              Optional[float] = None
     spread:               Optional[float] = None
     low_liquidity_options: bool           = False
+    high_iv_event_risk:   bool            = False
 
 
 class BatchTrainer:

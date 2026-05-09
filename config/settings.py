@@ -168,6 +168,7 @@ SCANNER_MAX_RETRIES         = 3           # per-ticker retries on HTTP 429 befor
 SCANNER_SCORE_THRESHOLD     = 60          # minimum composite score to include
 SCANNER_TRAIN_BARS          = 252         # bars used to fit HMM per ticker
 SCANNER_OPTIONS_SPREAD_MAX  = 0.20        # max ATM bid-ask spread ($) for liquidity
+SCANNER_MAX_IV_RANK         = 70          # IV rank ceiling; tickers above this are excluded
 SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first deployment
 SCANNER_DATA_FEED           = 'iex'       # data feed for bar requests (paper account cannot use SIP)
 

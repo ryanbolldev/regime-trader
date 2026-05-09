@@ -158,6 +158,9 @@ def main() -> None:
     exclusion_counts["low_liquidity_options"] = sum(
         1 for r in results if r.low_liquidity_options
     )
+    exclusion_counts["high_iv_event_risk"] = sum(
+        1 for r in results if r.high_iv_event_risk
+    )
 
     # ── 8. Report ──────────────────────────────────────────────────────
     reporter = Reporter()

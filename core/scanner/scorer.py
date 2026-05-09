@@ -27,7 +27,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from config.settings import SCANNER_SCORE_THRESHOLD
+from config.settings import SCANNER_MAX_IV_RANK, SCANNER_SCORE_THRESHOLD
 from core.scanner.batch_trainer import TickerResult
 
 log = logging.getLogger(__name__)
@@ -86,6 +86,12 @@ class Scorer:
 
         for r in results:
             if r.fit_failed or r.current_regime < 0:
+                continue
+            if r.high_iv_event_risk:
+                log.info(
+                    "[SCANNER] %s excluded — high_iv_event_risk: IV rank %.1f > %d",
+                    r.ticker, r.iv_rank or 0.0, SCANNER_MAX_IV_RANK,
+                )
                 continue
 
             long_s  = self._compute_score(r, direction="LONG")
