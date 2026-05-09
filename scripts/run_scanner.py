@@ -74,7 +74,10 @@ def fetch_ohlcv(client, tickers: list[str], train_bars: int) -> dict[str, pd.Dat
                 )
             )
             for ticker in chunk:
-                bars = list(resp.get(ticker, []))
+                try:
+                    bars = list(resp[ticker])
+                except KeyError:
+                    bars = []
                 if len(bars) < 30:
                     log.debug("OHLCV: insufficient bars for %s (%d)", ticker, len(bars))
                     continue
@@ -160,6 +163,9 @@ def main() -> None:
     )
     exclusion_counts["high_iv_event_risk"] = sum(
         1 for r in results if r.high_iv_event_risk
+    )
+    exclusion_counts["iv_data_unavailable"] = sum(
+        1 for r in results if r.iv_rank is None
     )
 
     # ── 8. Report ──────────────────────────────────────────────────────

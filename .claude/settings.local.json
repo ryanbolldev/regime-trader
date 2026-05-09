@@ -71,7 +71,16 @@
       "Bash(python -m pytest tests/test_scanner.py -x -q)",
       "Bash(python -m pytest tests/test_hmm_engine.py::TestStalenessThresholdConfigurable -v -q)",
       "Bash(python -m pytest tests/test_walk_forward.py::TestStalenessWarningAbove50Pct tests/test_walk_forward.py::TestStalenessWidening -v -q)",
-      "Bash(make walkforward *)"
+      "Bash(make walkforward *)",
+      "Bash(Test-Path \"c:\\\\Users\\\\bollr\\\\regime_trader\\\\core\\\\scanner\\\\universe.py\")",
+      "Bash(python -m pytest tests/test_scanner.py::TestUniverseManager -v -q)",
+      "Bash(python -m pytest tests/ -q --tb=no)",
+      "Bash(python -m pytest tests/test_scanner.py::TestHighIVEventRisk -v -q)",
+      "Bash(make scan *)",
+      "Bash(python -m pytest tests/test_scanner.py::TestUniverseManager -v)",
+      "Bash(python -m pytest tests/test_scanner.py::TestIVDataAvailability -v)",
+      "Bash(python -m pytest tests/test_scanner.py::TestPaperValidationBanner -v)",
+      "Bash(python -m pytest tests/test_scanner.py -q)"
     ]
   }
 }

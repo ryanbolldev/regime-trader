@@ -44,6 +44,7 @@ _EXCLUSION_LABELS: dict[str, str] = {
     "rate_limit_exhausted":  "Rate limit exhausted",
     "low_liquidity_options": "Low liquidity options",
     "high_iv_event_risk":    "High IV event risk (>70)",
+    "iv_data_unavailable":   "IV data unavailable (not excluded)",
 }
 _EXCLUSION_KEY_ORDER = list(_EXCLUSION_LABELS)
 
@@ -205,10 +206,11 @@ class Reporter:
                 "|--------|--------|-------|---------|----------|----------|",
             ]
             for s in longs:
+                iv_note = "" if s.iv_data_available else " \\[no IV data]"
                 lines.append(
                     f"| {s.ticker} | {s.regime_name} | {s.long_score:.0f} | "
                     f"{_fmt_iv(s.iv_rank)} | {s.regime_duration_bars}d | "
-                    f"{s.suggested_strategy} |"
+                    f"{s.suggested_strategy}{iv_note} |"
                 )
             lines.append("")
 
@@ -220,10 +222,11 @@ class Reporter:
                 "|--------|--------|-------|---------|----------|----------|",
             ]
             for s in shorts:
+                iv_note = "" if s.iv_data_available else " \\[no IV data]"
                 lines.append(
                     f"| {s.ticker} | {s.regime_name} | {s.short_score:.0f} | "
                     f"{_fmt_iv(s.iv_rank)} | {s.regime_duration_bars}d | "
-                    f"{s.suggested_strategy} |"
+                    f"{s.suggested_strategy}{iv_note} |"
                 )
             lines.append("")
 

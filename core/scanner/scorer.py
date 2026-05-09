@@ -53,6 +53,7 @@ class ScoredTicker:
     iv_rank:              Optional[float]
     spread:               Optional[float]
     low_liquidity_options: bool
+    iv_data_available:    bool
     regime_duration_bars: int
     bic_score:            float
     converged:            bool
@@ -109,19 +110,20 @@ class Scorer:
             regime_name = _REGIME_NAMES.get(r.current_regime, f"state_{r.current_regime}")
 
             all_scored.append(ScoredTicker(
-                ticker               = r.ticker,
-                current_regime       = r.current_regime,
-                regime_name          = regime_name,
-                long_score           = round(long_s,  1),
-                short_score          = round(short_s, 1),
-                direction            = direction,
-                suggested_strategy   = strategy,
-                iv_rank              = r.iv_rank,
-                spread               = r.spread,
+                ticker                = r.ticker,
+                current_regime        = r.current_regime,
+                regime_name           = regime_name,
+                long_score            = round(long_s,  1),
+                short_score           = round(short_s, 1),
+                direction             = direction,
+                suggested_strategy    = strategy,
+                iv_rank               = r.iv_rank,
+                spread                = r.spread,
                 low_liquidity_options = r.low_liquidity_options,
-                regime_duration_bars = r.regime_duration_bars,
-                bic_score            = round(r.bic_score, 1),
-                converged            = r.converged,
+                iv_data_available     = r.iv_rank is not None,
+                regime_duration_bars  = r.regime_duration_bars,
+                bic_score             = round(r.bic_score, 1),
+                converged             = r.converged,
             ))
 
         # Build distribution across ALL scored tickers before filtering
@@ -165,13 +167,24 @@ class Scorer:
         dur_pct      = min(r.regime_duration_bars / _REGIME_DURATION_SAT, 1.0)
         duration_comp = dur_pct * 100.0
 
-        # 4. IV rank (15%): aligned if LONG and IV is moderate; SHORT if IV is high
+        # 4. IV rank (15%): aligned if LONG and IV is moderate; SHORT if IV is high.
+        # When IV data unavailable, redistribute 15% equally to regime (7.5%) and
+        # confirmation (7.5%) so the score remains fully weighted.
         if r.iv_rank is None:
-            iv_comp = 50.0
+            iv_comp       = 0.0
+            iv_weight     = 0.0
+            regime_bonus  = 0.075
+            confirm_bonus = 0.075
         elif direction == "LONG":
-            iv_comp = max(0.0, 100.0 - r.iv_rank)
+            iv_comp       = max(0.0, 100.0 - r.iv_rank)
+            iv_weight     = 0.15
+            regime_bonus  = 0.0
+            confirm_bonus = 0.0
         else:
-            iv_comp = r.iv_rank
+            iv_comp       = r.iv_rank
+            iv_weight     = 0.15
+            regime_bonus  = 0.0
+            confirm_bonus = 0.0
 
         # 5. Model quality (10%)
         if r.bic_score == float("inf"):
@@ -180,11 +193,11 @@ class Scorer:
             quality_comp = 80.0 if r.converged else 50.0
 
         score = (
-            0.40 * regime_comp
-            + 0.20 * confirm_comp
-            + 0.15 * duration_comp
-            + 0.15 * iv_comp
-            + 0.10 * quality_comp
+            (0.40 + regime_bonus)  * regime_comp
+            + (0.20 + confirm_bonus) * confirm_comp
+            + 0.15                   * duration_comp
+            + iv_weight              * iv_comp
+            + 0.10                   * quality_comp
         )
         return min(100.0, score)
 

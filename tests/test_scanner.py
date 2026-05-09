@@ -95,13 +95,13 @@ class TestUniverseManager:
 
         def fake_bars(req):
             tickers = req.symbol_or_symbols
-            result = {}
+            data = {}
             for t in (tickers if isinstance(tickers, list) else [tickers]):
                 if t == "LOW_VOL":
-                    result[t] = [MagicMock(volume=100_000, close=50.0) for _ in range(10)]
+                    data[t] = [MagicMock(volume=100_000, close=50.0) for _ in range(10)]
                 else:
-                    result[t] = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
-            return result
+                    data[t] = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
+            return data
 
         mock_client._stocks.get_stock_bars.side_effect = fake_bars
 
@@ -115,19 +115,11 @@ class TestUniverseManager:
         assert "LOW_VOL"  not in result
 
     def test_barset_accessor_uses_bracket_notation(self):
-        """_filter_volume_price uses resp[ticker] not resp.get() — works with BarSet-like objects."""
-        class _FakeBarSet:
-            def __init__(self, data):
-                self._data = data
-            def __contains__(self, key):
-                return key in self._data
-            def __getitem__(self, key):
-                return self._data[key]
-            # deliberately no .get() method
-
-        bars = [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
+        """_filter_volume_price accesses resp[ticker] — BarSet supports __getitem__."""
         mock_client = MagicMock()
-        mock_client._stocks.get_stock_bars.return_value = _FakeBarSet({"AAPL": bars})
+        mock_client._stocks.get_stock_bars.return_value = {
+            "AAPL": [MagicMock(volume=5_000_000, close=200.0) for _ in range(10)]
+        }
 
         mgr    = UniverseManager(client=mock_client)
         result = mgr.get_tradeable(
@@ -136,13 +128,9 @@ class TestUniverseManager:
         assert "AAPL" in result
 
     def test_barset_missing_ticker_returns_empty(self):
-        """Ticker absent from the batch response is silently dropped (insufficient bars)."""
-        class _FakeBarSet:
-            def __contains__(self, key): return False
-            def __getitem__(self, key): raise KeyError(key)
-
+        """Ticker absent from the batch response (KeyError) is dropped for insufficient bars."""
         mock_client = MagicMock()
-        mock_client._stocks.get_stock_bars.return_value = _FakeBarSet()
+        mock_client._stocks.get_stock_bars.return_value = {}  # no bars for "MISSING"
 
         mgr    = UniverseManager(client=mock_client)
         result = mgr.get_tradeable(
@@ -310,6 +298,7 @@ class TestReporter:
             iv_rank=35.0,
             spread=0.10,
             low_liquidity_options=False,
+            iv_data_available=True,
             regime_duration_bars=12,
             bic_score=4500.0,
             converged=True,
@@ -481,7 +470,7 @@ class TestPaperValidationBanner:
             ticker="SPY", current_regime=3, regime_name="bull",
             long_score=80.0, short_score=20.0, direction="LONG",
             suggested_strategy="BUY_EQUITY", iv_rank=35.0,
-            spread=0.10, low_liquidity_options=False,
+            spread=0.10, low_liquidity_options=False, iv_data_available=True,
             regime_duration_bars=12, bic_score=4500.0, converged=True,
         )
 
@@ -770,3 +759,79 @@ class TestHighIVEventRisk:
         with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 70):
             OptionsEnricher(client=client, max_workers=1).enrich([result_loose])
         assert result_loose.high_iv_event_risk is False  # 65 <= 70
+
+
+# ---------------------------------------------------------------------------
+# IV data availability — None return, weight redistribution, flag propagation
+# ---------------------------------------------------------------------------
+
+class TestIVDataAvailability:
+
+    def _result(self, iv_rank=None, regime=3) -> TickerResult:
+        return TickerResult(
+            ticker="AAPL", current_regime=regime, regime_duration_bars=10,
+            bic_score=5000.0, converged=True, convergence_warning=False,
+            n_states=3, iv_rank=iv_rank,
+        )
+
+    def test_iv_rank_returns_none_on_failure(self):
+        """get_iv_rank returns None (not 50.0) when options chain fetch fails."""
+        client = MagicMock()
+        client.get_iv_rank.return_value = None
+
+        result = self._result()
+        OptionsEnricher(client=client, max_workers=1).enrich([result])
+        assert result.iv_rank is None
+
+    def test_scorer_redistributes_weight_on_none_iv(self):
+        """Score with iv_rank=None uses redistributed weights and produces a valid float."""
+        scorer = Scorer(threshold=0)
+        r = self._result(iv_rank=None, regime=3)  # bull regime
+        scored = scorer.score([r])
+        assert len(scored) == 1
+        s = scored[0]
+        # Redistributed: regime 47.5%, confirm 27.5%, duration 15%, quality 10%
+        # bull converged: regime_comp=90, confirm_comp=100, dur=50 (10/20), quality=80
+        expected = 0.475 * 90 + 0.275 * 100 + 0.15 * 50 + 0.10 * 80
+        assert abs(s.long_score - round(expected, 1)) < 0.2
+
+    def test_scorer_normal_weight_with_real_iv(self):
+        """Score with iv_rank=45 uses standard 15% IV weight."""
+        scorer = Scorer(threshold=0)
+        r = self._result(iv_rank=45.0, regime=3)
+        scored = scorer.score([r])
+        assert len(scored) == 1
+        s = scored[0]
+        # Standard weights: regime 40%, confirm 20%, dur 15%, iv 15%, quality 10%
+        # bull converged LONG: regime=90, confirm=100, dur=50, iv=100-45=55, quality=80
+        expected = 0.40 * 90 + 0.20 * 100 + 0.15 * 50 + 0.15 * 55 + 0.10 * 80
+        assert abs(s.long_score - round(expected, 1)) < 0.2
+
+    def test_iv_data_available_flag_set_correctly(self):
+        """iv_data_available=True when iv_rank is set, False when None."""
+        scorer = Scorer(threshold=0)
+
+        r_with_iv = self._result(iv_rank=40.0)
+        r_no_iv   = self._result(iv_rank=None)
+
+        scored = scorer.score([r_with_iv, r_no_iv])
+        by_ticker = {s.ticker + str(s.iv_rank): s for s in scored}
+
+        s_with = next(s for s in scored if s.iv_rank is not None)
+        s_none = next(s for s in scored if s.iv_rank is None)
+
+        assert s_with.iv_data_available is True
+        assert s_none.iv_data_available is False
+
+    def test_iv_data_unavailable_appears_in_exclusions_breakdown(self, tmp_path):
+        """Markdown exclusions section includes the IV data unavailable informational row."""
+        import datetime
+        deploy_file = tmp_path / "deployment_date.txt"
+        deploy_file.write_text(
+            (datetime.date.today() - datetime.timedelta(days=31)).isoformat(),
+            encoding="utf-8",
+        )
+        excl = {"iv_data_unavailable": 12}
+        reporter = Reporter(logs_dir=tmp_path)
+        _, md_path = reporter.write([], {}, exclusion_counts=excl)
+        assert "IV data unavailable" in md_path.read_text(encoding="utf-8")

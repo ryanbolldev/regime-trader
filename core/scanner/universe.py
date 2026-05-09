@@ -118,7 +118,10 @@ class UniverseManager:
 
             for ticker in chunk:
                 try:
-                    bars = list(resp[ticker]) if ticker in resp else []
+                    try:
+                        bars = list(resp[ticker])
+                    except KeyError:
+                        bars = []
                     if len(bars) < 5:
                         log.debug("Universe drop %s: insufficient bars (%d)", ticker, len(bars))
                         continue

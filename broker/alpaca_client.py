@@ -480,7 +480,7 @@ class AlpacaClient:
             _handle_sdk_error(exc)
             raise
 
-    def get_iv_rank(self, symbol: str, lookback_days: int = 252) -> float:
+    def get_iv_rank(self, symbol: str, lookback_days: int = 252) -> Optional[float]:
         """Compute IV Rank (0–100) for *symbol* over a rolling *lookback_days* window.
 
         Current IV is the median implied volatility of 30–45 DTE options in the
@@ -489,14 +489,14 @@ class AlpacaClient:
         a full history of IV snapshots).
 
         Returns iv_rank = (current_iv - iv_low) / (iv_high - iv_low) × 100,
-        clamped to [0, 100].  Returns 50.0 (neutral) when data are insufficient.
+        clamped to [0, 100].  Returns None when data are insufficient.
         """
         # ── Step 1: current IV from live options chain ─────────────────────
         try:
             chain = self.get_option_chain(symbol)
         except Exception as exc:
-            logger.warning("get_iv_rank [%s]: chain fetch failed — returning 50.0: %s", symbol, exc)
-            return 50.0
+            logger.warning("get_iv_rank [%s]: chain fetch failed: %s", symbol, exc)
+            return None
 
         today = _dt.date.today()
         ivs = [
@@ -506,8 +506,8 @@ class AlpacaClient:
             and 30 <= (_dt.date.fromisoformat(c.expiration) - today).days <= 45
         ]
         if not ivs:
-            logger.debug("get_iv_rank [%s]: no 30-45 DTE options with IV — returning 50.0", symbol)
-            return 50.0
+            logger.warning("get_iv_rank [%s]: no 30-45 DTE options with IV", symbol)
+            return None
 
         current_iv = float(np.median(ivs))
 
@@ -524,17 +524,20 @@ class AlpacaClient:
                     end=end,
                 )
             )
-            bars = list(resp.get(symbol, []))
+            try:
+                bars = list(resp[symbol])
+            except KeyError:
+                bars = []
         except Exception as exc:
-            logger.warning("get_iv_rank [%s]: bar fetch failed — returning 50.0: %s", symbol, exc)
-            return 50.0
+            logger.warning("get_iv_rank [%s]: bar fetch failed: %s", symbol, exc)
+            return None
 
         if len(bars) < 30:
-            logger.debug(
-                "get_iv_rank [%s]: only %d bars (need ≥30) — returning 50.0",
+            logger.warning(
+                "get_iv_rank [%s]: only %d bars (need ≥30)",
                 symbol, len(bars),
             )
-            return 50.0
+            return None
 
         closes   = np.array([b.close for b in bars], dtype=float)
         log_rets = np.log(closes[1:] / closes[:-1])
@@ -549,8 +552,8 @@ class AlpacaClient:
         iv_high = float(max(rv_series))
 
         if iv_high <= iv_low:
-            logger.debug("get_iv_rank [%s]: zero RV range — returning 50.0", symbol)
-            return 50.0
+            logger.warning("get_iv_rank [%s]: zero RV range", symbol)
+            return None
 
         iv_rank = (current_iv - iv_low) / (iv_high - iv_low) * 100.0
         iv_rank = max(0.0, min(100.0, iv_rank))
