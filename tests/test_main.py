@@ -258,6 +258,27 @@ class TestBarProcessing:
         event_names = [c.args[0] for c in patch_modules["al"].send.call_args_list]
         assert "regime_change" in event_names
 
+    def test_regime_change_alert_includes_symbol(
+        self, trader, mock_hmm, patch_modules
+    ):
+        """Each regime_change alert must carry symbol=ticker so per-ticker
+        cooldown buckets are used; without it one ticker suppresses all others."""
+        from config.settings import TICKERS
+        trader._current_regime = {t: 2 for t in TICKERS}
+        mock_hmm.predict_current.return_value = 3
+        mock_hmm.regime_name.return_value = "bull"
+        trader._run_bar()
+        regime_calls = [
+            c for c in patch_modules["al"].send.call_args_list
+            if c.args[0] == "regime_change"
+        ]
+        assert regime_calls
+        for call in regime_calls:
+            assert call.kwargs.get("symbol"), (
+                "regime_change alert missing symbol= kwarg — "
+                "BTC and SPY would share one cooldown bucket"
+            )
+
     def test_no_alert_when_regime_unchanged(
         self, trader, mock_hmm, patch_modules
     ):

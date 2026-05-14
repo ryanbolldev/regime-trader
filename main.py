@@ -337,6 +337,7 @@ class RegimeTrader:
                 f"[{ticker}] Regime change: {_REGIME_NAMES.get(prev_regime, prev_regime)} "
                 f"→ {regime_name}",
                 "info",
+                symbol=ticker,
             )
 
         if regime == -1:
@@ -716,6 +717,7 @@ class RegimeTrader:
             "data_feed_drop",
             f"Data feed unavailable for {ticker} after {DATA_MAX_RETRIES} retries",
             "warning",
+            symbol=ticker,
         )
         return None
 
