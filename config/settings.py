@@ -80,7 +80,8 @@ CRYPTO_SLIPPAGE_BPS = 10   # 0.10 % — crypto (wider spreads, 24/7 markets)
 # Bar resolution
 # ---------------------------------------------------------------------------
 BAR_TIMEFRAME      = "1Day"
-BAR_INTERVAL_SECS  = 86400   # seconds per bar (1Day=86400, 5Min=300)
+BAR_INTERVAL_SECS  = 86400   # seconds per bar — used by backtester for lag/timing maths
+                              # (NOT the live-loop poll frequency; see POLL_INTERVAL_SECS in main.py)
 
 # ---------------------------------------------------------------------------
 # Feature engineering
@@ -204,7 +205,7 @@ SP500_NASDAQ100_UNIVERSE: list[str] = [
     # Utilities / Real estate
     "NEE", "SO", "DUK", "D", "AEP", "EXC", "PLD", "AMT", "CCI", "EQIX",
     # Communication
-    "T", "VZ", "CMCSA", "DIS", "CHTR", "TMUS", "NFLX",
+    "T", "VZ", "CMCSA", "DIS", "CHTR", "TMUS",
     # Materials
     "LIN", "APD", "SHW", "FCX", "NEM", "ALB", "CE",
     # Insurance / diversified
@@ -212,7 +213,7 @@ SP500_NASDAQ100_UNIVERSE: list[str] = [
     # Software / cloud
     "WDAY", "ZS", "OKTA", "DDOG", "ZM", "SNOW", "PLTR", "RBLX",
     # Other large-cap
-    "IBM", "ORCL", "SAP", "ACN", "TDG", "ROP", "ANSS", "IDXX",
+    "IBM", "ORCL", "SAP", "ACN", "TDG", "ROP", "ANSS",
 ]
 
 # ---------------------------------------------------------------------------

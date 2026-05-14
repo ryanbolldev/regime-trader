@@ -5,11 +5,11 @@ Absolute risk gate with veto power over all trade signals.
 
 Circuit breakers evaluated in priority order:
   1. Peak-drawdown lockout  (-10 % from rolling HWM → halt all trading)
-  2. Daily drawdown close-all (-3 % intraday → flatten positions, suppress entries)
-  3. Daily drawdown halve  (-2 % intraday → 50 % size for remainder of session)
+  2. Daily drawdown halt    (-3 % intraday → suppress all entries)
+  3. Daily drawdown halve   (-2 % intraday → 50 % size for remainder of session)
   4. Weekly drawdown resize (-5 % weekly → 50 % max size until Monday)
-  5. Per-trade risk cap    (max 1 % NAV per trade)
-  6. Correlation budget    (placeholder — always passes in backtest context)
+
+Note: the per-trade risk cap (1 % NAV) is enforced in order_executor, not here.
 
 Public interface:
   initialize(nav)                        → None   # call once per fold / session

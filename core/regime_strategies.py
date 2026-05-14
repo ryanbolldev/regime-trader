@@ -311,10 +311,11 @@ class CrashStrategy(StrategyBase):
 
 
 class BearStrategy(StrategyBase):
-    """30 % allocation, reduced long exposure, defensive sectors. No new equity entries."""
+    """30 % allocation, reduced long exposure. New entries allowed at reduced sizing;
+    focus is tightening stops on existing positions rather than opening new ones."""
 
     regime_label = "bear"
-    allow_long   = False
+    allow_long   = True
     allow_short  = False
 
     def get_target_positions(

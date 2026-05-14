@@ -64,12 +64,12 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-LOCKFILE            = Path(__file__).parent / "trading.lock"
-LOG_DIR             = Path(__file__).parent / "logs"
-BAR_INTERVAL_SECS   = 300   # 5-minute bars
-API_RETRY_WAIT_SECS = 60    # pause after broker outage before retry
-DATA_RETRY_WAIT_SECS = 30   # pause between data-feed retries
-DATA_MAX_RETRIES    = 3     # max attempts before skipping a ticker
+LOCKFILE             = Path(__file__).parent / "trading.lock"
+LOG_DIR              = Path(__file__).parent / "logs"
+POLL_INTERVAL_SECS   = 300   # how often the live loop wakes to check for a new bar
+API_RETRY_WAIT_SECS  = 60    # pause after broker outage before retry
+DATA_RETRY_WAIT_SECS = 30    # pause between data-feed retries
+DATA_MAX_RETRIES     = 3     # max attempts before skipping a ticker
 
 _REGIME_NAMES = {-1: "unconfirmed", 0: "crash", 1: "bear",
                  2: "neutral", 3: "bull", 4: "euphoria"}
@@ -111,7 +111,7 @@ class RegimeTrader:
         hmm: Optional[HMMEngine] = None,
         risk_manager: RiskManager,
         lockfile: Path = LOCKFILE,
-        bar_interval: int = BAR_INTERVAL_SECS,
+        bar_interval: int = POLL_INTERVAL_SECS,
         close_positions_on_shutdown: bool = False,
     ) -> None:
         self._client       = client
@@ -132,8 +132,9 @@ class RegimeTrader:
         self._last_bar_data:    dict[str, dict]   = {}   # ticker → {regime, confidence, is_uncertain}
         self._regime_history:   dict[str, collections.deque] = {}  # ticker → rolling 20-bar window
 
-        # Persistent BTC strategy instance — tracks bar counter for unconfirmed-buy guard
-        self._btc_strategy: Optional[object] = None
+        # Persistent BTC instances — both carry intra-session state across bars
+        self._btc_strategy:     Optional[object] = None
+        self._btc_cycle_engine: Optional[object] = None
         self._btc_exit_failure_count: int = 0
 
     # ------------------------------------------------------------------
@@ -267,10 +268,12 @@ class RegimeTrader:
 
     def _run_bar(self) -> None:
         """Process a single bar iteration: risk update + per-ticker pipeline."""
-        # Detect market open→close transition for daily P&L summary
+        # Detect market state transitions
         is_open = self._client.is_market_open()
         if self._market_was_open and not is_open:
             self._fire_daily_pnl_summary()
+        if not self._market_was_open and is_open:
+            self._reset_daily_circuit_breakers()
         self._market_was_open = is_open
 
         # Per-ticker signal pipeline
@@ -486,6 +489,8 @@ class RegimeTrader:
 
         if self._btc_strategy is None:
             self._btc_strategy = BTCStrategy()
+        if self._btc_cycle_engine is None:
+            self._btc_cycle_engine = CycleEngine(ticker)
 
         try:
             current_price = float(ohlcv["close"].iloc[-1])
@@ -494,8 +499,7 @@ class RegimeTrader:
             return
 
         try:
-            cycle_eng    = CycleEngine(ticker)
-            cycle_signal = cycle_eng.get_cycle_signal(ohlcv)
+            cycle_signal = self._btc_cycle_engine.get_cycle_signal(ohlcv)
         except Exception as exc:
             log.warning("BTC cycle signal failed: %s — skipping BTC bar", exc)
             return
@@ -603,7 +607,7 @@ class RegimeTrader:
             float(cycle_signal.composite_score),
         )
 
-        btc_symbol = settings.BTC_TICKERS[0]  # "BTC/USD"
+        btc_symbol = settings.BTC_TICKERS[0]  # "BTCUSD"
         order_size = action.size_usd
 
         if settings.LIVE_ACCOUNT_MODE:
@@ -720,6 +724,20 @@ class RegimeTrader:
             symbol=ticker,
         )
         return None
+
+    def _reset_daily_circuit_breakers(self) -> None:
+        """Call at each market open: reset intraday halt flags, and weekly flags on Monday."""
+        try:
+            nav = float(position_tracker.get_nav())
+        except Exception:
+            nav = float(self._client.get_account().portfolio_value)
+
+        self._risk.reset_daily(nav)
+        log.info("RiskManager: daily circuit breakers reset (nav=$%.2f)", nav)
+
+        if datetime.now(tz=timezone.utc).weekday() == 0:  # Monday
+            self._risk.reset_weekly(nav)
+            log.info("RiskManager: weekly circuit breakers reset (Monday open)")
 
     def _fire_daily_pnl_summary(self) -> None:
         """Fire end-of-day P&L alert at market close."""
@@ -852,11 +870,14 @@ class RegimeTrader:
                         log.info(
                             "Submitting market sell: %s qty=%.6f", ticker, qty
                         )
+                        _btc_syms = {s.upper() for s in settings.BTC_TICKERS} | {"BTC", "BTC/USD"}
+                        tif = "ioc" if ticker.upper() in _btc_syms else "day"
                         self._client.submit_order(
-                            symbol     = ticker,
-                            qty        = qty,
-                            side       = "sell",
-                            order_type = "market",
+                            symbol        = ticker,
+                            qty           = qty,
+                            side          = "sell",
+                            order_type    = "market",
+                            time_in_force = tif,
                         )
                     return
             log.info("close_position: no open position found for %s", ticker)

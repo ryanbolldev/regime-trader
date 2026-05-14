@@ -142,19 +142,22 @@ class TestGetTargetAllocation:
 
     # -- uncertainty --
 
-    def test_uncertainty_halves_neutral_allocation(self):
+    def test_uncertainty_scales_neutral_allocation(self):
+        from config.settings import UNCERTAINTY_ALLOCATION_FACTOR
         result = STRATEGY.get_target_allocation(2, _cycle(), True)
-        assert result == pytest.approx(0.05)   # 0.10 * 0.50
+        assert result == pytest.approx(0.10 * UNCERTAINTY_ALLOCATION_FACTOR)
 
-    def test_uncertainty_with_boost_halves_boosted(self):
-        # neutral + boost → bull (0.15), uncertainty → 0.15 * 0.50 = 0.075
+    def test_uncertainty_with_boost_scales_boosted(self):
+        from config.settings import UNCERTAINTY_ALLOCATION_FACTOR
+        # neutral + boost → bull (0.15), uncertainty → 0.15 * UNCERTAINTY_ALLOCATION_FACTOR
         result = STRATEGY.get_target_allocation(2, _cycle(composite_score=0.8), True)
-        assert result == pytest.approx(0.075)
+        assert result == pytest.approx(0.15 * UNCERTAINTY_ALLOCATION_FACTOR)
 
     def test_uncertainty_with_failed_cycle(self):
-        # bull + failed → neutral (0.10), uncertainty → 0.10 * 0.50 = 0.05
+        from config.settings import UNCERTAINTY_ALLOCATION_FACTOR
+        # bull + failed → neutral (0.10), uncertainty → 0.10 * UNCERTAINTY_ALLOCATION_FACTOR
         result = STRATEGY.get_target_allocation(3, _cycle(failed_cycle=True), True)
-        assert result == pytest.approx(0.05)
+        assert result == pytest.approx(0.10 * UNCERTAINTY_ALLOCATION_FACTOR)
 
     # -- BTC_MAX_ALLOCATION cap --
 

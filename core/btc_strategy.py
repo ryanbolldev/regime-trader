@@ -5,24 +5,25 @@ BTC spot trading strategy with cycle-adjusted regime allocations.
 
 REGIME_ALLOCATIONS:
   crash    0.00 — sit out entirely
-  bear     0.25 — light long exposure
-  neutral  0.50 — moderate exposure
-  bull     0.75 — full exposure
-  euphoria 0.40 — trim back (mean-reversion risk)
+  bear     0.05 — minimal long exposure
+  neutral  0.10 — moderate exposure
+  bull     0.15 — full exposure
+  euphoria 0.08 — trim back (take-profit; intentionally below bull)
 
 Cycle overlay:
   When BTC_CYCLE_TIER_BOOST is True, a strong cycle signal
   (composite_score >= CYCLE_COMPOSITE_THRESHOLD) boosts the target by one
   tier, and a failed cycle reduces it by one tier.  Tiers follow regime
   indices (0–4), so a bull regime (3) boosted moves to the euphoria
-  allocation (4 → 0.40), encoding the take-profit logic.  A failed cycle
-  in bear regime (1) reduces to crash (0 → 0.00).
+  allocation (4 → 0.08), encoding take-profit logic.  A failed cycle in
+  bear regime (1) reduces to crash (0 → 0.00).
 
 Uncertainty:
-  When HMM is uncertain, target allocation is multiplied by 0.50.
+  When HMM is uncertain, target allocation is multiplied by
+  UNCERTAINTY_ALLOCATION_FACTOR (default 0.60).
 
 Cap:
-  Final target is capped at BTC_MAX_ALLOCATION (default 0.75).
+  Final target is capped at BTC_MAX_ALLOCATION (default 0.15).
 
 Public interface:
   BTCPosition   — dataclass snapshot of the current BTC spot position
@@ -46,6 +47,7 @@ from config.settings import (
     BTC_MAX_ALLOCATION,
     BTC_REBALANCE_THRESHOLD,
     CYCLE_COMPOSITE_THRESHOLD,
+    UNCERTAINTY_ALLOCATION_FACTOR,
 )
 
 if TYPE_CHECKING:
@@ -138,7 +140,7 @@ class BTCStrategy:
                 adj = self.REGIME_ALLOCATIONS[higher]
 
         if is_uncertain:
-            adj *= 0.50
+            adj *= UNCERTAINTY_ALLOCATION_FACTOR
 
         return min(adj, BTC_MAX_ALLOCATION)
 
