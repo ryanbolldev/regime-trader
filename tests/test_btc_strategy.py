@@ -456,7 +456,6 @@ class TestSubmitCryptoOrder:
             symbol       = "BTC/USD",
             notional_usd = 10_000.0,
             side         = "buy",
-            time_in_force = "gtc",
         )
 
     def test_returns_none_for_zero_notional(self):

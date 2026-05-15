@@ -187,7 +187,7 @@ class TestSubmitCryptoOrder:
         client.get_orders.return_value = []
         order_executor.submit_crypto_order("BTC/USD", "buy", 500.0, client)
         client.submit_order_notional.assert_called_once_with(
-            symbol="BTC/USD", notional_usd=500.0, side="buy", time_in_force="gtc"
+            symbol="BTC/USD", notional_usd=500.0, side="buy"
         )
 
     def test_dedup_skips_if_open_order_exists(self):
@@ -234,6 +234,6 @@ class TestSubmitCryptoOrder:
             "BTC/USD", "buy", 500.0, client, qty=0.01
         )
         client.submit_order_notional.assert_called_once_with(
-            symbol="BTC/USD", notional_usd=500.0, side="buy", time_in_force="gtc"
+            symbol="BTC/USD", notional_usd=500.0, side="buy"
         )
         client.submit_order.assert_not_called()

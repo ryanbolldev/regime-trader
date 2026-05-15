@@ -245,7 +245,6 @@ def submit_crypto_order(
             symbol=symbol,
             notional_usd=notional_usd,
             side=side,
-            time_in_force="gtc",
         )
     except Exception as exc:
         log.error(
