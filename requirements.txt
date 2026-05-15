@@ -11,6 +11,9 @@ alpaca-py>=0.26.0
 # Configuration / secrets
 python-dotenv>=1.0.1
 
+# HTML parsing (pandas.read_html backend for Wikipedia universe fetch)
+lxml>=5.2.0
+
 # Technical indicators
 ta>=0.11.0           # RSI, ATR, SMA, etc.
 

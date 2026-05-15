@@ -29,7 +29,7 @@ from core.scanner.scorer import (
     build_score_distribution,
     get_suggested_strategy,
 )
-from core.scanner.universe import UniverseManager
+from core.scanner.universe import UniverseManager, fetch_universe, _normalise
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +82,11 @@ def _ticker_result(
 class TestUniverseManager:
 
     def test_no_client_returns_full_universe(self):
-        """Without a client, all de-duped universe tickers are returned."""
+        """Without a client, all de-duped universe tickers are returned (no filtering)."""
         from config.settings import SP500_NASDAQ100_UNIVERSE
-        mgr     = UniverseManager(client=None)
-        result  = mgr.get_tradeable()
-        unique  = list(dict.fromkeys(SP500_NASDAQ100_UNIVERSE))
+        unique = list(dict.fromkeys(SP500_NASDAQ100_UNIVERSE))
+        mgr    = UniverseManager(client=None)
+        result = mgr.get_tradeable(universe=SP500_NASDAQ100_UNIVERSE)
         assert result == unique
 
     def test_volume_price_filter_drops_low_volume(self):
@@ -792,6 +792,149 @@ class TestHighIVEventRisk:
         with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 70):
             OptionsEnricher(client=client, max_workers=1).enrich([result_loose])
         assert result_loose.high_iv_event_risk is False  # 65 <= 70
+
+
+# ---------------------------------------------------------------------------
+# fetch_universe — live Wikipedia fetch, normalisation, dedup, fallback, cache
+# ---------------------------------------------------------------------------
+
+class TestFetchUniverse:
+
+    # ------------------------------------------------------------------
+    # Normalisation — pure unit tests, no mocking needed
+    # ------------------------------------------------------------------
+
+    def test_normalise_dot_to_slash(self):
+        assert _normalise("BRK.B") == "BRK/B"
+
+    def test_normalise_bf_b(self):
+        assert _normalise("BF.B") == "BF/B"
+
+    def test_normalise_plain_ticker_unchanged(self):
+        assert _normalise("AAPL") == "AAPL"
+
+    def test_normalise_strips_whitespace(self):
+        assert _normalise("  MSFT ") == "MSFT"
+
+    def test_normalise_uppercases(self):
+        assert _normalise("aapl") == "AAPL"
+
+    # ------------------------------------------------------------------
+    # fetch_universe — patch the private helpers to avoid the >=90 guard
+    # that distinguishes the right Nasdaq 100 table on the real page.
+    # These tests verify the combining / dedup / ordering logic only.
+    # ------------------------------------------------------------------
+
+    def test_fetch_universe_combines_both_indices(self):
+        """fetch_universe() merges S&P 500 and Nasdaq 100 results."""
+        with (
+            patch("core.scanner.universe._fetch_sp500",   return_value=["AAPL", "MSFT", "BRK/B"]),
+            patch("core.scanner.universe._fetch_nasdaq100", return_value=["AAPL", "NVDA"]),
+        ):
+            result = fetch_universe()
+
+        assert "AAPL"  in result
+        assert "MSFT"  in result
+        assert "BRK/B" in result
+        assert "NVDA"  in result
+
+    def test_fetch_universe_deduplicates(self):
+        """Tickers present in both indices appear exactly once."""
+        with (
+            patch("core.scanner.universe._fetch_sp500",   return_value=["AAPL", "MSFT", "NVDA"]),
+            patch("core.scanner.universe._fetch_nasdaq100", return_value=["AAPL", "NVDA", "META"]),
+        ):
+            result = fetch_universe()
+
+        assert result.count("AAPL") == 1
+        assert result.count("NVDA") == 1
+        assert "META" in result
+
+    def test_fetch_universe_sp500_listed_before_ndx_additions(self):
+        """S&P 500 tickers come first; unique Nasdaq 100 additions are appended."""
+        with (
+            patch("core.scanner.universe._fetch_sp500",   return_value=["AAPL", "MSFT"]),
+            patch("core.scanner.universe._fetch_nasdaq100", return_value=["AAPL", "CRWD"]),
+        ):
+            result = fetch_universe()
+
+        assert result.index("AAPL") < result.index("CRWD")
+
+    def test_fetch_universe_combined_count(self):
+        """Combined list has exactly the unique union of both indices."""
+        with (
+            patch("core.scanner.universe._fetch_sp500",   return_value=["AAPL", "MSFT", "GOOG"]),
+            patch("core.scanner.universe._fetch_nasdaq100", return_value=["AAPL", "NVDA"]),
+        ):
+            result = fetch_universe()
+
+        assert len(result) == 4  # AAPL, MSFT, GOOG, NVDA
+
+    # ------------------------------------------------------------------
+    # Fallback behaviour — patch pd.read_html to simulate network errors
+    # ------------------------------------------------------------------
+
+    def test_sp500_fetch_failure_falls_back_to_static_list(self):
+        """When S&P 500 Wikipedia fetch fails, static SP500_NASDAQ100_UNIVERSE is used."""
+        from config.settings import SP500_NASDAQ100_UNIVERSE
+
+        with patch("core.scanner.universe.pd.read_html", side_effect=ConnectionError("down")):
+            result = fetch_universe()
+
+        for ticker in SP500_NASDAQ100_UNIVERSE[:5]:
+            assert _normalise(ticker) in result
+
+    def test_nasdaq100_fetch_failure_uses_sp500_only(self):
+        """When Nasdaq 100 fetch fails, the S&P 500 list is still returned."""
+        sp_tickers = ["AAPL", "MSFT", "GOOG"]
+
+        call_count = 0
+
+        def side_effect(url, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [pd.DataFrame({"Symbol": sp_tickers})]
+            raise ConnectionError("ndx100 down")
+
+        with patch("core.scanner.universe.pd.read_html", side_effect=side_effect):
+            result = fetch_universe()
+
+        assert "AAPL" in result
+        assert "MSFT" in result
+        assert "GOOG" in result
+
+    def test_both_fetches_fail_returns_static_fallback(self):
+        """When both Wikipedia pages fail, the full static list is returned."""
+        from config.settings import SP500_NASDAQ100_UNIVERSE
+
+        with patch("core.scanner.universe.pd.read_html", side_effect=Exception("outage")):
+            result = fetch_universe()
+
+        assert len(result) > 0
+        assert all(_normalise(t) in result for t in SP500_NASDAQ100_UNIVERSE[:10])
+
+    # ------------------------------------------------------------------
+    # Per-run cache — patch fetch_universe itself to count calls
+    # ------------------------------------------------------------------
+
+    def test_get_universe_cached_after_first_call(self):
+        """_get_universe() calls fetch_universe() only once per instance."""
+        with patch("core.scanner.universe.fetch_universe", return_value=["AAPL"]) as mock_fetch:
+            mgr = UniverseManager(client=None)
+            mgr._get_universe()
+            mgr._get_universe()  # second call — should hit cache
+
+        assert mock_fetch.call_count == 1
+
+    def test_get_tradeable_uses_cache_on_repeat(self):
+        """Calling get_tradeable() twice calls fetch_universe() only once."""
+        with patch("core.scanner.universe.fetch_universe", return_value=["AAPL"]) as mock_fetch:
+            mgr = UniverseManager(client=None)
+            mgr.get_tradeable()
+            mgr.get_tradeable()
+
+        assert mock_fetch.call_count == 1
 
 
 # ---------------------------------------------------------------------------
