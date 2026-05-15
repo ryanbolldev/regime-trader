@@ -113,7 +113,7 @@ class Reporter:
 
         if longs:
             lines.append("Top LONG candidates:")
-            for s in longs[:5]:
+            for s in longs[:10]:
                 lines.append(
                     f"  {s.ticker} | regime={s.regime_name} | "
                     f"score={s.long_score:.0f} | iv_rank={_fmt_iv(s.iv_rank)} | "
@@ -121,7 +121,7 @@ class Reporter:
                 )
         if shorts:
             lines.append("Top SHORT candidates:")
-            for s in shorts[:5]:
+            for s in shorts[:10]:
                 lines.append(
                     f"  {s.ticker} | regime={s.regime_name} | "
                     f"score={s.short_score:.0f} | iv_rank={_fmt_iv(s.iv_rank)} | "
