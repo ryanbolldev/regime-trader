@@ -176,6 +176,8 @@ SCANNER_OPTIONS_SPREAD_MAX  = 0.20        # max ATM bid-ask spread ($) for liqui
 SCANNER_MAX_IV_RANK         = 70          # IV rank ceiling; tickers above this are excluded
 SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first deployment
 SCANNER_DATA_FEED           = 'iex'       # data feed for bar requests (paper account cannot use SIP)
+SCANNER_RUN_UTC_HOUR        = 11          # scheduler fire time — 11:00 UTC = 6 AM ET
+SCANNER_RUN_UTC_MINUTE      = 0
 
 # S&P 500 + Nasdaq 100 combined universe (~200 most liquid tickers)
 SP500_NASDAQ100_UNIVERSE: list[str] = [

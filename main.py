@@ -57,6 +57,7 @@ from core import (
 )
 from core.hmm_engine import HMMEngine
 from core.risk_manager import RiskManager
+from core.scheduler import ScannerScheduler
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +132,9 @@ class RegimeTrader:
         self._recent_signals:   collections.deque = collections.deque(maxlen=50)
         self._last_bar_data:    dict[str, dict]   = {}   # ticker → {regime, confidence, is_uncertain}
         self._regime_history:   dict[str, collections.deque] = {}  # ticker → rolling 20-bar window
+
+        # Scanner scheduler — daemon thread started in startup()
+        self._scheduler: Optional[ScannerScheduler] = None
 
         # Persistent BTC instances — both carry intra-session state across bars
         self._btc_strategy:     Optional[object] = None
@@ -229,6 +233,11 @@ class RegimeTrader:
             f"Market={'OPEN' if is_open else 'CLOSED'}",
             "info",
         )
+
+        # Step 8: start the daily scanner scheduler
+        self._scheduler = ScannerScheduler()
+        self._scheduler.start()
+
         log.info("Startup complete — entering main loop")
 
     # ------------------------------------------------------------------
@@ -926,6 +935,9 @@ class RegimeTrader:
         self._running       = False
         self._shutdown_reason = reason
         log.info("Shutting down: reason=%s", reason)
+
+        if self._scheduler is not None:
+            self._scheduler.stop()
 
         try:
             cancelled = order_executor.cancel_all()
