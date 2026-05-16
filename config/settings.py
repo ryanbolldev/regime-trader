@@ -161,7 +161,10 @@ MSTR_BTC_BETA = 2.5
 # ---------------------------------------------------------------------------
 # Scanner
 # ---------------------------------------------------------------------------
-SCANNER_MIN_VOLUME          = 1_000_000   # avg daily volume filter
+# Volume threshold is feed-dependent. IEX captures ~2-3% of total US equity
+# volume (paper accounts only); SIP is the full consolidated tape (live accounts).
+# Switch to 1_000_000 and set SCANNER_DATA_FEED='sip' when going live.
+SCANNER_MIN_VOLUME          = 20_000      # avg daily volume filter (IEX feed)
 SCANNER_MIN_PRICE           = 10.0        # price per share filter
 SCANNER_MAX_WORKERS         = 5           # ThreadPoolExecutor parallelism (rate-limit safe)
 SCANNER_BATCH_SLEEP_SECS    = 0.5         # sleep between worker batches to throttle API calls

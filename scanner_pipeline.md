@@ -76,7 +76,7 @@ Both metrics are computed as a simple mean across available bars in the window.
 
 | Filter | Parameter | Default | Action on failure |
 |--------|-----------|---------|-------------------|
-| Average daily volume | `SCANNER_MIN_VOLUME` | 1,000,000 shares | Excluded — `low_volume` |
+| Average daily volume | `SCANNER_MIN_VOLUME` | 20,000 shares (IEX) · 1,000,000 (SIP/live) | Excluded — `low_volume` |
 | Average closing price | `SCANNER_MIN_PRICE` | $10.00 | Excluded — `low_price` |
 
 A ticker must return at least **5 bars** to be evaluated; fewer bars drops it
@@ -389,7 +389,7 @@ All parameters live in `config/settings.py`.
 | Setting | Default | Stage |
 |---------|---------|-------|
 | `SP500_NASDAQ100_UNIVERSE` | ~189 curated tickers | 0 — static fallback only |
-| `SCANNER_MIN_VOLUME` | 1,000,000 | 1 — UniverseManager |
+| `SCANNER_MIN_VOLUME` | 20,000 (IEX); set to 1,000,000 for SIP on live | 1 — UniverseManager |
 | `SCANNER_MIN_PRICE` | 10.0 | 1 — UniverseManager |
 | `SCANNER_DATA_FEED` | `iex` | 1, 2 — bar requests |
 | `SCANNER_TRAIN_BARS` | 252 | 2 — OHLCV fetch, 3 — BatchTrainer |
