@@ -6,7 +6,7 @@ A Python algorithmic trading bot that uses a Hidden Markov Model (HMM) to classi
 
 - **HMM regime classification** across 5 market states (crash → euphoria)
 - **BTC spot trading** with 60-day cycle overlay and regime-tiered allocation
-- **Wheel strategy** (cash-secured puts + covered calls) for income generation on MSTR and CVX
+- **Wheel strategy** (cash-secured puts + covered calls) for income generation on MSTR
 - **Nightly scanner** that screens a configurable equity universe, scores each ticker via HMM + IV rank, and writes a ranked watchlist with Telegram alert
 - **Multi-layer risk management**: per-trade caps, intraday/weekly/peak drawdown circuit breakers
 - **Live account mode** with tighter caps, equity-only BTC trading, and mandatory second-validation logging
@@ -122,7 +122,7 @@ regime_trader/
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `TICKERS` | `["SPY","MSTR","CVX","BTC"]` | Full trading universe |
+| `TICKERS` | `["SPY","MSTR","BTC"]` | Full trading universe |
 | `REFERENCE_TICKERS` | `["SPY"]` | HMM context only — never traded |
 | `PER_TRADE_RISK_CAP` | `0.01` | Max 1% of NAV per trade |
 | `MAX_POSITIONS` | `5` | Concurrent open positions cap |

@@ -23,7 +23,7 @@ Never place API keys or secrets in this file.
 # ---------------------------------------------------------------------------
 # Universe
 # ---------------------------------------------------------------------------
-TICKERS           = ["SPY", "MSTR", "CVX", "BTC"]
+TICKERS           = ["SPY", "MSTR", "BTC"]
 REFERENCE_TICKERS = ["SPY"]   # run HMM for regime context but never trade
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ SP500_NASDAQ100_UNIVERSE: list[str] = [
 # ---------------------------------------------------------------------------
 # Wheel strategy
 # ---------------------------------------------------------------------------
-WHEEL_TICKERS               = ["MSTR", "CVX"]
+WHEEL_TICKERS               = ["MSTR"]
 WHEEL_PUT_DELTA_TARGET      = -0.28   # target delta for put selection
 WHEEL_CALL_DELTA_TARGET     =  0.28   # target delta for call selection
 WHEEL_MIN_DTE               =  30     # minimum days to expiration

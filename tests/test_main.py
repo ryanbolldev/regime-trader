@@ -975,7 +975,7 @@ class TestPositionCloseOnCrash:
         pos_a.symbol = "MSTR"
         pos_a.qty    = 10.0
         pos_b = MagicMock()
-        pos_b.symbol = "CVX"
+        pos_b.symbol = "AAPL"
         pos_b.qty    = 20.0
         mock_client.get_positions.return_value = [pos_a, pos_b]
 
@@ -994,7 +994,7 @@ class TestPositionCloseOnCrash:
         }
         # Both positions must have received a close order
         assert "MSTR" in submitted_symbols or any(
-            c.kwargs.get("symbol") in ("MSTR", "CVX")
+            c.kwargs.get("symbol") in ("MSTR", "AAPL")
             for c in mock_client.submit_order.call_args_list
         )
 
@@ -1132,13 +1132,13 @@ class TestMSTRCorrelationGuard:
         monkeypatch.setattr(s, "MSTR_BTC_BETA", 2.5)
         monkeypatch.setattr(s, "BTC_MAX_ALLOCATION", 0.15)
         mock_client.is_market_open.return_value = True
-        # High BTC exposure — but we're processing CVX, not MSTR
+        # High BTC exposure — but we're processing AAPL, not MSTR
         mock_client.get_positions.return_value = [self._btc_pos(20_000.0)]
         mock_hmm.predict_current.return_value = 3
         mock_risk.approve.return_value = MagicMock(
             approved=True, size_multiplier=1.0, reason="approved"
         )
 
-        trader._process_ticker("CVX")
+        trader._process_ticker("AAPL")
 
         patch_modules["oe"].submit.assert_called()

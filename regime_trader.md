@@ -411,7 +411,7 @@ Cap at BTC_MAX_ALLOCATION (0.15)
 
 **File:** `core/wheel_strategy.py`
 
-The wheel strategy generates income by selling cash-secured puts and covered calls in a repeating cycle. It is applied to `WHEEL_TICKERS = ["MSTR", "CVX"]`.
+The wheel strategy generates income by selling cash-secured puts and covered calls in a repeating cycle. It is applied to `WHEEL_TICKERS = ["MSTR"]`.
 
 #### State machine
 
@@ -951,10 +951,10 @@ All parameters live in `config/settings.py`. Never put credentials here.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `TICKERS` | `["SPY","MSTR","CVX","BTC"]` | Full universe |
+| `TICKERS` | `["SPY","MSTR","BTC"]` | Full universe |
 | `REFERENCE_TICKERS` | `["SPY"]` | HMM training only |
 | `BTC_TICKERS` | `["BTCUSD"]` | Alpaca crypto symbol |
-| `WHEEL_TICKERS` | `["MSTR","CVX"]` | Wheel strategy candidates |
+| `WHEEL_TICKERS` | `["MSTR"]` | Wheel strategy candidates |
 
 ### HMM & stability
 

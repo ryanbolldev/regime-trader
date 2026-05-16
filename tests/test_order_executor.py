@@ -77,7 +77,7 @@ class TestRiskCapEnforcement:
 
         with patch("core.position_tracker.get_nav", return_value=NAV), \
              patch("core.market_data.get_latest_bar", return_value={"close": 190.0}):
-            order_executor._submit_equity_order(signal, client, "CVX")
+            order_executor._submit_equity_order(signal, client, "MSTR")
 
         call_kwargs = client.submit_order.call_args
         assert call_kwargs is not None
