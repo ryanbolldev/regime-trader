@@ -72,7 +72,7 @@ The system is deliberately **data-flow, not event-driven**. Every 300 seconds (`
 
 ## Startup Sequence
 
-On launch, `RegimeTrader.startup()` runs seven steps in order. Any failure in steps 2–4 is fatal (raises `SystemExit` or `RuntimeError`).
+On launch, `RegimeTrader.startup()` runs eight steps in order. Any failure in steps 2–4 is fatal (raises `SystemExit` or `RuntimeError`).
 
 | Step | Action | Failure mode |
 |------|--------|--------------|
@@ -83,8 +83,9 @@ On launch, `RegimeTrader.startup()` runs seven steps in order. Any failure in st
 | 5 | Fetch 2 years of daily bars and train one `HMMEngine` per ticker | Logged warning if any ticker fails; non-fatal |
 | 6 | Initialize `RiskManager` with current portfolio NAV | — |
 | 7 | Reconcile `position_tracker` from broker positions; cancel lingering orders | Logged warning if reconciliation fails; non-fatal |
+| 8 | Start `ScannerScheduler` daemon thread | Logged warning if start fails; non-fatal |
 
-After a successful startup, a `STARTUP` alert fires with NAV and market status.
+After a successful startup, a `STARTUP` alert fires with NAV and market status. The scanner scheduler begins watching for its configured fire time (default 11:00 UTC / 6 AM ET, Mon–Fri).
 
 ---
 
@@ -1035,7 +1036,7 @@ All parameters live in `config/settings.py`. Never put credentials here.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `SCANNER_MIN_VOLUME` | 1_000_000 | Minimum avg daily volume to qualify |
+| `SCANNER_MIN_VOLUME` | 20_000 (IEX) / 1_000_000 (SIP) | Avg daily volume filter — switch to 1M and `SCANNER_DATA_FEED='sip'` for live |
 | `SCANNER_MIN_PRICE` | 10.0 | Minimum share price to qualify |
 | `SCANNER_MAX_WORKERS` | 5 | Parallel worker threads for HMM fitting |
 | `SCANNER_BATCH_SLEEP_SECS` | 0.5 | Sleep between worker batches to throttle API |
@@ -1047,3 +1048,5 @@ All parameters live in `config/settings.py`. Never put credentials here.
 | `SCANNER_MAX_IV_RANK` | 70 | IV rank ceiling; tickers above this are excluded |
 | `SCANNER_PAPER_ONLY_DAYS` | 30 | Paper-validation window after first deployment |
 | `SCANNER_DATA_FEED` | `'iex'` | Alpaca data feed (paper accounts require `'iex'`) |
+| `SCANNER_RUN_UTC_HOUR` | 11 | Hour (UTC) the scheduler fires the scanner (11 = 6 AM ET) |
+| `SCANNER_RUN_UTC_MINUTE` | 0 | Minute (UTC) the scheduler fires the scanner |
