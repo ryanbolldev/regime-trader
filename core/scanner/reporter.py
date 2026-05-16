@@ -43,8 +43,8 @@ _EXCLUSION_LABELS: dict[str, str] = {
     "fit_failed":            "HMM fit failure",
     "rate_limit_exhausted":  "Rate limit exhausted",
     "low_liquidity_options": "Low liquidity options",
-    "high_iv_event_risk":    "High IV event risk (>70)",
-    "iv_data_unavailable":   "IV data unavailable (not excluded)",
+    "high_iv_event_risk":    "High vol event risk (>70)",
+    "iv_data_unavailable":   "Vol estimate unavailable (not excluded)",
 }
 _EXCLUSION_KEY_ORDER = list(_EXCLUSION_LABELS)
 
@@ -202,14 +202,14 @@ class Reporter:
             lines += [
                 "## LONG Candidates",
                 "",
-                "| Ticker | Regime | Score | IV Rank | Duration | Strategy |",
-                "|--------|--------|-------|---------|----------|----------|",
+                "| Ticker | Regime | Score | Vol | Duration | Strategy |",
+                "|--------|--------|-------|-----|----------|----------|",
             ]
             for s in longs:
                 iv_note = "" if s.iv_data_available else " \\[regime-only, no IV]"
                 lines.append(
                     f"| {s.ticker} | {s.regime_name} | {s.long_score:.0f} | "
-                    f"{_fmt_iv(s.iv_rank)} | {s.regime_duration_bars}d | "
+                    f"{_fmt_iv(s.iv_rank, s.vol_estimated)} | {s.regime_duration_bars}d | "
                     f"{s.suggested_strategy}{iv_note} |"
                 )
             lines.append("")
@@ -218,20 +218,22 @@ class Reporter:
             lines += [
                 "## SHORT Candidates",
                 "",
-                "| Ticker | Regime | Score | IV Rank | Duration | Strategy |",
-                "|--------|--------|-------|---------|----------|----------|",
+                "| Ticker | Regime | Score | Vol | Duration | Strategy |",
+                "|--------|--------|-------|-----|----------|----------|",
             ]
             for s in shorts:
                 iv_note = "" if s.iv_data_available else " \\[regime-only, no IV]"
                 lines.append(
                     f"| {s.ticker} | {s.regime_name} | {s.short_score:.0f} | "
-                    f"{_fmt_iv(s.iv_rank)} | {s.regime_duration_bars}d | "
+                    f"{_fmt_iv(s.iv_rank, s.vol_estimated)} | {s.regime_duration_bars}d | "
                     f"{s.suggested_strategy}{iv_note} |"
                 )
             lines.append("")
 
         if not scored:
             lines.append("*No tickers met the scoring threshold today.*")
+
+        lines += _render_vol_footer_md(scored)
 
         path = self._logs_dir / f"watchlist_{today}.md"
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -348,5 +350,30 @@ def _render_exclusions_md(exclusion_counts: dict[str, int]) -> list[str]:
 # Misc helpers
 # ---------------------------------------------------------------------------
 
-def _fmt_iv(iv_rank: float | None) -> str:
-    return f"{iv_rank:.0f}" if iv_rank is not None else "N/A"
+def _render_vol_footer_md(scored: list) -> list[str]:
+    """Render the vol estimate methodology note for the markdown footer."""
+    if not scored:
+        return []
+    vix_available = any(
+        s.vol_components.get('vix') is not None
+        for s in scored
+        if s.vol_components
+    )
+    if vix_available:
+        note = (
+            "* vol estimates marked [~est] use realized vol (50%)"
+            " + VIX rank (30%) + term structure (20%)"
+        )
+    else:
+        note = (
+            "* vol estimates marked [~est] use realized vol + term structure only"
+            " (VIX data unavailable)"
+        )
+    return ["", "---", note, ""]
+
+
+def _fmt_iv(iv_rank: float | None, vol_estimated: bool = False) -> str:
+    if iv_rank is None:
+        return "N/A"
+    prefix = "~" if vol_estimated else ""
+    return f"{prefix}{iv_rank:.0f}"

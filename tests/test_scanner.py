@@ -210,14 +210,18 @@ class TestBatchTrainer:
 class TestOptionsEnricher:
 
     def test_enricher_attaches_iv_rank(self):
-        """iv_rank is populated from client.get_iv_rank()."""
+        """iv_rank is populated from the vol estimator (compute_vol_estimate)."""
         mock_client = MagicMock()
-        mock_client.get_iv_rank.return_value = 65.0
-        mock_client.get_option_chain.return_value = []
+        mock_client.get_option_chain.side_effect = Exception("no options")
 
-        result  = _ticker_result(iv_rank=None)
-        enricher = OptionsEnricher(client=mock_client, max_workers=1)
-        enricher.enrich([result])
+        ohlcv = {'SPY': _make_ohlcv(300)}
+        result = _ticker_result(iv_rank=None)
+        with patch(
+            'core.scanner.options_enricher.compute_vol_estimate',
+            return_value=(65.0, {'realized': 65.0, 'vix': None, 'term': 65.0}),
+        ):
+            enricher = OptionsEnricher(client=mock_client, max_workers=1, ohlcv_map=ohlcv)
+            enricher.enrich([result])
 
         assert result.iv_rank == pytest.approx(65.0)
 
@@ -713,14 +717,18 @@ class TestHighIVEventRisk:
         )
 
     def test_high_iv_flag_set_above_threshold(self):
-        """OptionsEnricher sets high_iv_event_risk=True when iv_rank > SCANNER_MAX_IV_RANK."""
+        """OptionsEnricher sets high_iv_event_risk=True when vol_rank > SCANNER_MAX_IV_RANK."""
         from config.settings import SCANNER_MAX_IV_RANK
         client = MagicMock()
-        client.get_iv_rank.return_value = SCANNER_MAX_IV_RANK + 5.0
-        client.get_option_chain.return_value = []
-
+        client.get_option_chain.side_effect = Exception("no options")
+        vol_rank = SCANNER_MAX_IV_RANK + 5.0
+        ohlcv = {'AAPL': _make_ohlcv(300)}
         result = self._result(iv_rank=None)
-        OptionsEnricher(client=client, max_workers=1).enrich([result])
+        with patch(
+            'core.scanner.options_enricher.compute_vol_estimate',
+            return_value=(vol_rank, {'realized': vol_rank, 'vix': None, 'term': vol_rank}),
+        ):
+            OptionsEnricher(client=client, max_workers=1, ohlcv_map=ohlcv).enrich([result])
         assert result.high_iv_event_risk is True
 
     def test_high_iv_flag_not_set_below_threshold(self):
@@ -774,23 +782,32 @@ class TestHighIVEventRisk:
         excl = {"high_iv_event_risk": 3}
         reporter = Reporter(logs_dir=tmp_path)
         _, md_path = reporter.write([], {}, exclusion_counts=excl)
-        assert "High IV event risk" in md_path.read_text(encoding="utf-8")
+        assert "High vol event risk" in md_path.read_text(encoding="utf-8")
 
     def test_scanner_max_iv_rank_configurable(self):
         """Changing SCANNER_MAX_IV_RANK changes the exclusion threshold in the enricher."""
         from unittest.mock import patch as _patch
         client = MagicMock()
-        client.get_iv_rank.return_value = 65.0  # between 60 and 70
-        client.get_option_chain.return_value = []
+        client.get_option_chain.side_effect = Exception("no options")
+        vol_rank = 65.0  # between 60 and 70
+        ohlcv = {'AAPL': _make_ohlcv(300)}
 
         result_strict = self._result(iv_rank=None)
-        with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 60):
-            OptionsEnricher(client=client, max_workers=1).enrich([result_strict])
+        with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 60), \
+             _patch(
+                 'core.scanner.options_enricher.compute_vol_estimate',
+                 return_value=(vol_rank, {'realized': vol_rank, 'vix': None, 'term': vol_rank}),
+             ):
+            OptionsEnricher(client=client, max_workers=1, ohlcv_map=ohlcv).enrich([result_strict])
         assert result_strict.high_iv_event_risk is True  # 65 > 60
 
         result_loose = self._result(iv_rank=None)
-        with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 70):
-            OptionsEnricher(client=client, max_workers=1).enrich([result_loose])
+        with _patch("core.scanner.options_enricher.SCANNER_MAX_IV_RANK", 70), \
+             _patch(
+                 'core.scanner.options_enricher.compute_vol_estimate',
+                 return_value=(vol_rank, {'realized': vol_rank, 'vix': None, 'term': vol_rank}),
+             ):
+            OptionsEnricher(client=client, max_workers=1, ohlcv_map=ohlcv).enrich([result_loose])
         assert result_loose.high_iv_event_risk is False  # 65 <= 70
 
 
@@ -1010,4 +1027,4 @@ class TestIVDataAvailability:
         excl = {"iv_data_unavailable": 12}
         reporter = Reporter(logs_dir=tmp_path)
         _, md_path = reporter.write([], {}, exclusion_counts=excl)
-        assert "IV data unavailable" in md_path.read_text(encoding="utf-8")
+        assert "Vol estimate unavailable" in md_path.read_text(encoding="utf-8")

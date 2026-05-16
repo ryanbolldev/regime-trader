@@ -35,7 +35,13 @@ import pandas as pd
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
-from config.settings import SCANNER_DATA_FEED, SCANNER_MAX_WORKERS, SCANNER_TRAIN_BARS
+from config.settings import (
+    SCANNER_DATA_FEED,
+    SCANNER_MAX_WORKERS,
+    SCANNER_TRAIN_BARS,
+    SCANNER_VIX_LOOKBACK,
+    SCANNER_VIX_SYMBOL,
+)
 from core.scanner.batch_trainer import BatchTrainer
 from core.scanner.options_enricher import OptionsEnricher
 from core.scanner.reporter import Reporter
@@ -99,6 +105,31 @@ def fetch_ohlcv(client, tickers: list[str], train_bars: int) -> dict[str, pd.Dat
     return ohlcv_map
 
 
+def fetch_vix_data(client, lookback_bars: int = SCANNER_VIX_LOOKBACK) -> pd.Series | None:
+    """Fetch daily VIXY close series as VIX proxy.  Returns None on failure."""
+    try:
+        end   = datetime.datetime.now(datetime.timezone.utc)
+        start = end - datetime.timedelta(days=int(lookback_bars * 1.5))
+        resp  = client._stocks.get_stock_bars(
+            StockBarsRequest(
+                symbol_or_symbols=[SCANNER_VIX_SYMBOL],
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                feed=SCANNER_DATA_FEED,
+            )
+        )
+        bars   = list(resp[SCANNER_VIX_SYMBOL])
+        closes = pd.Series([b.close for b in bars])
+        return closes.tail(lookback_bars)
+    except Exception as exc:
+        log.warning(
+            "[Scanner] VIX/VIXY fetch failed: %s — vol estimator will run without VIX component",
+            exc,
+        )
+        return None
+
+
 def main() -> None:
     t0 = time.monotonic()
     log.info("=== Regime Trader Nightly Scanner ===")
@@ -111,6 +142,13 @@ def main() -> None:
     except Exception as exc:
         log.critical("AlpacaClient init failed: %s", exc)
         sys.exit(1)
+
+    # ── 1b. Fetch VIX data for vol estimator ──────────────────────────
+    vix_series = fetch_vix_data(client)
+    if vix_series is not None:
+        log.info("VIX/VIXY data fetched: %d bars", len(vix_series))
+    else:
+        log.info("VIX/VIXY data unavailable — vol estimator will use realized vol + term structure only")
 
     try:
         # ── 2. Universe filter ─────────────────────────────────────────────
@@ -136,7 +174,12 @@ def main() -> None:
         sys.exit(1)
 
     # ── 5. Options enrichment ──────────────────────────────────────────
-    enricher = OptionsEnricher(client=client, max_workers=SCANNER_MAX_WORKERS)
+    enricher = OptionsEnricher(
+        client      = client,
+        max_workers = SCANNER_MAX_WORKERS,
+        vix_series  = vix_series,
+        ohlcv_map   = ohlcv_map,
+    )
     results  = enricher.enrich(results)
 
     # ── 6. Composite scoring ───────────────────────────────────────────
@@ -194,7 +237,7 @@ def main() -> None:
         for s in longs[:10]:
             print(
                 f"  {s.ticker:<6} regime={s.regime_name:<8} score={s.long_score:>5.0f}"
-                f"  iv={_fmt(s.iv_rank)}  dur={s.regime_duration_bars:>3}d"
+                f"  vol={_fmt_vol(s.iv_rank, s.vol_estimated)}  dur={s.regime_duration_bars:>3}d"
                 f"  [{s.suggested_strategy}]"
             )
     if shorts:
@@ -202,7 +245,7 @@ def main() -> None:
         for s in shorts[:10]:
             print(
                 f"  {s.ticker:<6} regime={s.regime_name:<8} score={s.short_score:>5.0f}"
-                f"  iv={_fmt(s.iv_rank)}  dur={s.regime_duration_bars:>3}d"
+                f"  vol={_fmt_vol(s.iv_rank, s.vol_estimated)}  dur={s.regime_duration_bars:>3}d"
                 f"  [{s.suggested_strategy}]"
             )
 
@@ -212,8 +255,12 @@ def main() -> None:
     print("=" * 60)
 
 
-def _fmt(v: float | None) -> str:
-    return f"{v:>5.0f}" if v is not None else "  N/A"
+def _fmt_vol(v: float | None, estimated: bool = False) -> str:
+    if v is None:
+        return "  N/A"
+    if estimated:
+        return f"~{v:>3.0f} [est]"
+    return f"{v:>5.0f}"
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import pandas as pd
@@ -63,6 +63,11 @@ class TickerResult:
     spread:               Optional[float] = None
     low_liquidity_options: bool           = False
     high_iv_event_risk:   bool            = False
+    # vol estimator fields (populated by OptionsEnricher)
+    vol_rank:             Optional[float] = None
+    vol_rank_available:   bool            = False
+    vol_components:       dict            = field(default_factory=dict)
+    vol_estimated:        bool            = False
 
 
 class BatchTrainer:

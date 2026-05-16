@@ -24,7 +24,7 @@ Public interface:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from config.settings import SCANNER_MAX_IV_RANK, SCANNER_SCORE_THRESHOLD
@@ -57,6 +57,8 @@ class ScoredTicker:
     regime_duration_bars: int
     bic_score:            float
     converged:            bool
+    vol_estimated:        bool = False
+    vol_components:       dict = field(default_factory=dict)
 
 
 class Scorer:
@@ -124,6 +126,8 @@ class Scorer:
                 regime_duration_bars  = r.regime_duration_bars,
                 bic_score             = round(r.bic_score, 1),
                 converged             = r.converged,
+                vol_estimated         = r.vol_estimated,
+                vol_components        = r.vol_components,
             ))
 
         # Build distribution across ALL scored tickers before filtering

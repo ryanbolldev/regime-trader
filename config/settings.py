@@ -179,6 +179,21 @@ SCANNER_DATA_FEED           = 'iex'       # data feed for bar requests (paper ac
 SCANNER_RUN_UTC_HOUR        = 11          # scheduler fire time — 11:00 UTC = 6 AM ET
 SCANNER_RUN_UTC_MINUTE      = 0
 
+# Volatility estimator weights (combined vol rank proxy — no options API required)
+SCANNER_VOL_REALIZED_WEIGHT  = 0.50   # realized vol percentile rank weight
+SCANNER_VOL_VIX_WEIGHT       = 0.30   # VIX percentile rank weight
+SCANNER_VOL_TERM_WEIGHT      = 0.20   # vol term structure score weight
+
+# Realized vol windows
+SCANNER_VOL_WINDOW_SHORT     = 10     # bars — short-term realized vol
+SCANNER_VOL_WINDOW_MID       = 20     # bars — medium-term realized vol (primary)
+SCANNER_VOL_WINDOW_LONG      = 60     # bars — long-term realized vol
+SCANNER_VOL_LOOKBACK         = 252    # bars — percentile rank lookback window
+
+# VIX settings
+SCANNER_VIX_SYMBOL           = 'VIXY' # Alpaca-tradeable VIX proxy
+SCANNER_VIX_LOOKBACK         = 252    # bars for VIX percentile rank
+
 # S&P 500 + Nasdaq 100 combined universe (~200 most liquid tickers)
 SP500_NASDAQ100_UNIVERSE: list[str] = [
     # Mega-cap tech / growth
