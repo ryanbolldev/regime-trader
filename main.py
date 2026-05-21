@@ -401,6 +401,10 @@ class RegimeTrader:
             self._maybe_close_on_crash(ticker)
             return
 
+        # Exit signal execution: euphoria flatten + regime-specific trailing stops
+        if self._execute_exit_signals(ticker, regime):
+            return  # close submitted; skip buy-signal path this bar
+
         # Build signal
         try:
             nav = float(position_tracker.get_nav())
@@ -892,6 +896,85 @@ class RegimeTrader:
             log.info("close_position: no open position found for %s", ticker)
         except Exception as exc:
             log.error("close_position failed for %s: %s", ticker, exc)
+
+    def _execute_exit_signals(self, ticker: str, regime: int) -> bool:
+        """Evaluate and execute per-position exit rules for the current regime.
+
+        Euphoria (4): flatten all long positions (profit-taking, no new entries).
+        Bear / neutral / bull: trailing stop — close when unrealized P&L falls
+        below the configured threshold for that regime.
+
+        Returns True when a close order was submitted so _process_ticker() can
+        skip the buy-signal path for this bar.
+        """
+        try:
+            broker_positions = self._client.get_positions()
+            pos = next(
+                (p for p in broker_positions
+                 if p.symbol.upper() == ticker.upper()),
+                None,
+            )
+        except Exception as exc:
+            log.warning("Exit check: could not fetch positions for %s: %s", ticker, exc)
+            return False
+
+        if pos is None:
+            return False  # no open position — nothing to exit
+
+        # ── Euphoria: flatten all longs ────────────────────────────────────
+        if regime == 4 and settings.EQUITY_EUPHORIA_FLATTEN:
+            try:
+                unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0)) * 100
+            except (TypeError, ValueError):
+                unrealized_pct = 0.0
+            log.info(
+                "Euphoria exit: closing %s (unrealized=%.2f%%)",
+                ticker, unrealized_pct,
+            )
+            self.close_position(ticker)
+            alerts.send(
+                "trade_placed",
+                f"Euphoria exit: {ticker}  side=sell  reason=profit-taking  "
+                f"unrealized={unrealized_pct:+.1f}%",
+                "info",
+                symbol=ticker,
+                side="sell",
+            )
+            return True
+
+        # ── Trailing stops for bear / neutral / bull ───────────────────────
+        stop_map = {
+            1: settings.EQUITY_BEAR_STOP_PCT,
+            2: settings.EQUITY_NEUTRAL_STOP_PCT,
+            3: settings.EQUITY_BULL_STOP_PCT,
+        }
+        stop_pct = stop_map.get(regime)
+        if stop_pct is None:
+            return False
+
+        try:
+            unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0))
+        except (TypeError, ValueError):
+            return False
+
+        if unrealized_pct <= stop_pct:
+            regime_name = _REGIME_NAMES.get(regime, str(regime))
+            log.info(
+                "Trailing stop hit: closing %s regime=%s unrealized=%.2f%% <= stop=%.2f%%",
+                ticker, regime_name, unrealized_pct * 100, stop_pct * 100,
+            )
+            self.close_position(ticker)
+            alerts.send(
+                "trade_placed",
+                f"Stop-loss exit: {ticker}  side=sell  regime={regime_name}  "
+                f"unrealized={unrealized_pct:.1%}  stop={stop_pct:.1%}",
+                "info",
+                symbol=ticker,
+                side="sell",
+            )
+            return True
+
+        return False
 
     def _maybe_close_on_crash(self, ticker: str) -> None:
         """Close any held equity position when crash regime is detected."""

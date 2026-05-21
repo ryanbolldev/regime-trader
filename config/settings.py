@@ -59,6 +59,14 @@ PER_TRADE_RISK_CAP  = 0.01    # max 1 % of capital per trade
 MAX_POSITIONS        = 5       # concurrent open positions cap
 MAX_CORR_BUDGET      = 0.70   # max portfolio-level correlation allowed
 
+# Per-position equity exit thresholds (unrealized P&L as decimal fraction)
+# Euphoria: close all longs immediately for profit-taking.
+# Bear/neutral/bull: trailing stop — close if unrealized P&L falls below threshold.
+EQUITY_EUPHORIA_FLATTEN = True    # set False to disable auto-flatten in euphoria
+EQUITY_BEAR_STOP_PCT    = -0.05   # trailing stop in bear:    -5 % from entry
+EQUITY_NEUTRAL_STOP_PCT = -0.06   # trailing stop in neutral: -6 % from entry
+EQUITY_BULL_STOP_PCT    = -0.08   # trailing stop in bull:    -8 % from entry (wider)
+
 # ---------------------------------------------------------------------------
 # Strategy / regime allocation
 # ---------------------------------------------------------------------------

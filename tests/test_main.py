@@ -1142,3 +1142,155 @@ class TestMSTRCorrelationGuard:
         trader._process_ticker("AAPL")
 
         patch_modules["oe"].submit.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# TestExitSignals
+# ---------------------------------------------------------------------------
+
+class TestExitSignals:
+    """Unit tests for _execute_exit_signals(): euphoria flatten and trailing stops."""
+
+    def _pos(self, symbol: str, qty: float, unrealized_plpc: float) -> MagicMock:
+        p = MagicMock(spec=["symbol", "qty", "unrealized_plpc"])
+        p.symbol         = symbol
+        p.qty            = qty
+        p.unrealized_plpc = unrealized_plpc
+        return p
+
+    # ── No position → no-op ────────────────────────────────────────────────
+
+    def test_no_position_returns_false(self, trader, mock_client):
+        mock_client.get_positions.return_value = []
+        assert trader._execute_exit_signals("MSTR", 3) is False
+
+    def test_get_positions_exception_returns_false(self, trader, mock_client):
+        mock_client.get_positions.side_effect = RuntimeError("broker down")
+        assert trader._execute_exit_signals("MSTR", 3) is False
+
+    def test_wrong_ticker_in_positions_returns_false(self, trader, mock_client):
+        mock_client.get_positions.return_value = [self._pos("AAPL", 5.0, -0.10)]
+        assert trader._execute_exit_signals("MSTR", 3) is False
+
+    # ── Euphoria (regime 4) ────────────────────────────────────────────────
+
+    def test_euphoria_closes_open_position(self, trader, mock_client):
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        result = trader._execute_exit_signals("MSTR", 4)
+        assert result is True
+        assert mock_client.submit_order.call_args.kwargs.get("side") == "sell"
+
+    def test_euphoria_fires_sell_alert(self, trader, mock_client, patch_modules):
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        trader._execute_exit_signals("MSTR", 4)
+        trade_alerts = [
+            c for c in patch_modules["al"].send.call_args_list
+            if c.args[0] == "trade_placed"
+        ]
+        assert trade_alerts, "expected a trade_placed alert on euphoria exit"
+        assert trade_alerts[0].kwargs.get("side") == "sell"
+        assert trade_alerts[0].kwargs.get("symbol") == "MSTR"
+
+    def test_euphoria_disabled_by_setting_returns_false(
+        self, trader, mock_client, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_EUPHORIA_FLATTEN", False)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        result = trader._execute_exit_signals("MSTR", 4)
+        assert result is False
+        mock_client.submit_order.assert_not_called()
+
+    def test_euphoria_skips_buy_path_after_close(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        """After euphoria flattens a position _process_ticker must not place a buy."""
+        import config.settings as s
+        monkeypatch.setattr(s, "TICKERS", ["MSTR"])
+        monkeypatch.setattr(s, "REFERENCE_TICKERS", [])
+        mock_client.is_market_open.return_value = True
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        mock_hmm.predict_current.return_value = 4   # euphoria
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+        trader._run_bar()
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_euphoria_case_insensitive_symbol_match(self, trader, mock_client):
+        mock_client.get_positions.return_value = [self._pos("mstr", 10.0, 0.08)]
+        result = trader._execute_exit_signals("MSTR", 4)
+        assert result is True
+
+    # ── Bear trailing stop (regime 1) ──────────────────────────────────────
+
+    def test_bear_above_stop_returns_false(self, trader, mock_client, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BEAR_STOP_PCT", -0.05)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.04)]
+        assert trader._execute_exit_signals("MSTR", 1) is False
+        mock_client.submit_order.assert_not_called()
+
+    def test_bear_at_stop_boundary_closes(self, trader, mock_client, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BEAR_STOP_PCT", -0.05)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.05)]
+        assert trader._execute_exit_signals("MSTR", 1) is True
+
+    def test_bear_below_stop_closes_position(self, trader, mock_client, monkeypatch):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BEAR_STOP_PCT", -0.05)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.09)]
+        assert trader._execute_exit_signals("MSTR", 1) is True
+        assert mock_client.submit_order.call_args.kwargs.get("side") == "sell"
+
+    def test_bear_stop_fires_sell_alert(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BEAR_STOP_PCT", -0.05)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.09)]
+        trader._execute_exit_signals("MSTR", 1)
+        trade_alerts = [
+            c for c in patch_modules["al"].send.call_args_list
+            if c.args[0] == "trade_placed"
+        ]
+        assert trade_alerts
+        assert trade_alerts[0].kwargs.get("side") == "sell"
+        assert trade_alerts[0].kwargs.get("symbol") == "MSTR"
+
+    # ── Neutral trailing stop (regime 2) ───────────────────────────────────
+
+    def test_neutral_below_stop_closes_position(
+        self, trader, mock_client, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_NEUTRAL_STOP_PCT", -0.06)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.07)]
+        assert trader._execute_exit_signals("MSTR", 2) is True
+
+    def test_neutral_above_stop_returns_false(
+        self, trader, mock_client, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_NEUTRAL_STOP_PCT", -0.06)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.03)]
+        assert trader._execute_exit_signals("MSTR", 2) is False
+
+    # ── Bull trailing stop (regime 3) ──────────────────────────────────────
+
+    def test_bull_below_stop_closes_position(
+        self, trader, mock_client, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BULL_STOP_PCT", -0.08)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.09)]
+        assert trader._execute_exit_signals("MSTR", 3) is True
+
+    def test_bull_above_stop_returns_false(
+        self, trader, mock_client, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "EQUITY_BULL_STOP_PCT", -0.08)
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, -0.05)]
+        assert trader._execute_exit_signals("MSTR", 3) is False
