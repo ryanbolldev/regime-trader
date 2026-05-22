@@ -63,6 +63,7 @@ def mock_client() -> MagicMock:
     c.get_account.return_value   = _mock_account()
     c.is_market_open.return_value = True
     c.get_positions.return_value  = []
+    c.get_orders.return_value     = []   # dedup check in _execute_exit_signals
     return c
 
 
@@ -1151,12 +1152,25 @@ class TestMSTRCorrelationGuard:
 class TestExitSignals:
     """Unit tests for _execute_exit_signals(): euphoria flatten and trailing stops."""
 
-    def _pos(self, symbol: str, qty: float, unrealized_plpc: float) -> MagicMock:
-        p = MagicMock(spec=["symbol", "qty", "unrealized_plpc"])
-        p.symbol         = symbol
-        p.qty            = qty
+    def _pos(
+        self,
+        symbol: str,
+        qty: float,
+        unrealized_plpc: float,
+        market_value: float = 5_000.0,
+    ) -> MagicMock:
+        p = MagicMock(spec=["symbol", "qty", "unrealized_plpc", "market_value"])
+        p.symbol          = symbol
+        p.qty             = qty
         p.unrealized_plpc = unrealized_plpc
+        p.market_value    = market_value
         return p
+
+    def _sell_order(self, symbol: str) -> MagicMock:
+        o = MagicMock()
+        o.symbol = symbol
+        o.side   = "sell"
+        return o
 
     # ── No position → no-op ────────────────────────────────────────────────
 
@@ -1180,8 +1194,12 @@ class TestExitSignals:
         assert result is True
         assert mock_client.submit_order.call_args.kwargs.get("side") == "sell"
 
-    def test_euphoria_fires_sell_alert(self, trader, mock_client, patch_modules):
-        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+    def test_euphoria_fires_sell_alert_with_size_usd(
+        self, trader, mock_client, patch_modules
+    ):
+        mock_client.get_positions.return_value = [
+            self._pos("MSTR", 10.0, 0.08, market_value=4_500.0)
+        ]
         trader._execute_exit_signals("MSTR", 4)
         trade_alerts = [
             c for c in patch_modules["al"].send.call_args_list
@@ -1190,6 +1208,20 @@ class TestExitSignals:
         assert trade_alerts, "expected a trade_placed alert on euphoria exit"
         assert trade_alerts[0].kwargs.get("side") == "sell"
         assert trade_alerts[0].kwargs.get("symbol") == "MSTR"
+        assert trade_alerts[0].kwargs.get("size_usd") == pytest.approx(4_500.0)
+
+    def test_euphoria_alert_not_fired_when_submit_fails(
+        self, trader, mock_client, patch_modules
+    ):
+        """Alert must be silent when submit_order raises — no false-positive notification."""
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        mock_client.submit_order.side_effect = RuntimeError("403 Forbidden")
+        trader._execute_exit_signals("MSTR", 4)
+        trade_alerts = [
+            c for c in patch_modules["al"].send.call_args_list
+            if c.args[0] == "trade_placed"
+        ]
+        assert not trade_alerts, "alert must not fire when order submission fails"
 
     def test_euphoria_disabled_by_setting_returns_false(
         self, trader, mock_client, monkeypatch
@@ -1221,6 +1253,52 @@ class TestExitSignals:
         mock_client.get_positions.return_value = [self._pos("mstr", 10.0, 0.08)]
         result = trader._execute_exit_signals("MSTR", 4)
         assert result is True
+
+    # ── Dedup: existing sell order prevents resubmission and re-alert ──────
+
+    def test_dedup_returns_true_when_sell_order_already_open(
+        self, trader, mock_client, patch_modules
+    ):
+        """If a sell order is already open, True is returned (buy path blocked)
+        but no new order is submitted and no alert fires."""
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        mock_client.get_orders.return_value = [self._sell_order("MSTR")]
+
+        result = trader._execute_exit_signals("MSTR", 4)
+
+        assert result is True
+        mock_client.submit_order.assert_not_called()
+        trade_alerts = [
+            c for c in patch_modules["al"].send.call_args_list
+            if c.args[0] == "trade_placed"
+        ]
+        assert not trade_alerts, "alert must not fire when sell order already open"
+
+    def test_dedup_case_insensitive_order_match(
+        self, trader, mock_client, patch_modules
+    ):
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        mock_client.get_orders.return_value = [self._sell_order("mstr")]  # lower-case
+
+        result = trader._execute_exit_signals("MSTR", 4)
+
+        assert result is True
+        mock_client.submit_order.assert_not_called()
+
+    def test_dedup_buy_order_does_not_block_close(
+        self, trader, mock_client
+    ):
+        """An open BUY order for the same ticker must not suppress the sell."""
+        buy_order = MagicMock()
+        buy_order.symbol = "MSTR"
+        buy_order.side   = "buy"
+        mock_client.get_positions.return_value = [self._pos("MSTR", 10.0, 0.08)]
+        mock_client.get_orders.return_value = [buy_order]
+
+        result = trader._execute_exit_signals("MSTR", 4)
+
+        assert result is True
+        mock_client.submit_order.assert_called_once()
 
     # ── Bear trailing stop (regime 1) ──────────────────────────────────────
 

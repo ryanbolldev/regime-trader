@@ -867,13 +867,15 @@ class RegimeTrader:
     # Position management helpers
     # ------------------------------------------------------------------
 
-    def close_position(self, ticker: str) -> None:
+    def close_position(self, ticker: str) -> Optional[object]:
         """Submit a market sell for the full open position in ticker.
 
+        Returns the OrderResult if an order was submitted, None otherwise
+        (no position found, zero qty, or broker error).
         Safe to call when no position exists — logs and returns quietly.
         Used for manual intervention and circuit-breaker position flattening.
         """
-        log.info("Manual close initiated for %s", ticker)
+        log.info("Closing position: %s", ticker)
         try:
             positions = self._client.get_positions()
             for pos in positions:
@@ -885,17 +887,19 @@ class RegimeTrader:
                         )
                         _btc_syms = {s.upper() for s in settings.BTC_TICKERS} | {"BTC", "BTC/USD"}
                         tif = "ioc" if ticker.upper() in _btc_syms else "day"
-                        self._client.submit_order(
+                        return self._client.submit_order(
                             symbol        = ticker,
                             qty           = qty,
                             side          = "sell",
                             order_type    = "market",
                             time_in_force = tif,
                         )
-                    return
+                    return None
             log.info("close_position: no open position found for %s", ticker)
+            return None
         except Exception as exc:
             log.error("close_position failed for %s: %s", ticker, exc)
+            return None
 
     def _execute_exit_signals(self, ticker: str, regime: int) -> bool:
         """Evaluate and execute per-position exit rules for the current regime.
@@ -904,8 +908,11 @@ class RegimeTrader:
         Bear / neutral / bull: trailing stop — close when unrealized P&L falls
         below the configured threshold for that regime.
 
-        Returns True when a close order was submitted so _process_ticker() can
-        skip the buy-signal path for this bar.
+        Returns True when an exit condition is active so _process_ticker()
+        skips the buy-signal path. Returns False when no position is held.
+
+        Alert fires only when an order is actually submitted (not on dedup or
+        broker error) to prevent notification spam across consecutive bars.
         """
         try:
             broker_positions = self._client.get_positions()
@@ -921,60 +928,81 @@ class RegimeTrader:
         if pos is None:
             return False  # no open position — nothing to exit
 
-        # ── Euphoria: flatten all longs ────────────────────────────────────
+        # ── Determine whether exit condition is met ────────────────────────
+        exit_reason: Optional[str] = None
+        unrealized_pct: float = 0.0
+        stop_pct: Optional[float] = None
+
         if regime == 4 and settings.EQUITY_EUPHORIA_FLATTEN:
             try:
-                unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0)) * 100
+                unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0))
             except (TypeError, ValueError):
                 unrealized_pct = 0.0
-            log.info(
-                "Euphoria exit: closing %s (unrealized=%.2f%%)",
-                ticker, unrealized_pct,
-            )
-            self.close_position(ticker)
-            alerts.send(
-                "trade_placed",
+            exit_reason = (
                 f"Euphoria exit: {ticker}  side=sell  reason=profit-taking  "
-                f"unrealized={unrealized_pct:+.1f}%",
-                "info",
-                symbol=ticker,
-                side="sell",
+                f"unrealized={unrealized_pct:+.1%}"
             )
-            return True
+        else:
+            stop_map = {
+                1: settings.EQUITY_BEAR_STOP_PCT,
+                2: settings.EQUITY_NEUTRAL_STOP_PCT,
+                3: settings.EQUITY_BULL_STOP_PCT,
+            }
+            stop_pct = stop_map.get(regime)
+            if stop_pct is not None:
+                try:
+                    unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0))
+                except (TypeError, ValueError):
+                    return False
+                if unrealized_pct <= stop_pct:
+                    regime_name = _REGIME_NAMES.get(regime, str(regime))
+                    exit_reason = (
+                        f"Stop-loss exit: {ticker}  side=sell  regime={regime_name}  "
+                        f"unrealized={unrealized_pct:.1%}  stop={stop_pct:.1%}"
+                    )
 
-        # ── Trailing stops for bear / neutral / bull ───────────────────────
-        stop_map = {
-            1: settings.EQUITY_BEAR_STOP_PCT,
-            2: settings.EQUITY_NEUTRAL_STOP_PCT,
-            3: settings.EQUITY_BULL_STOP_PCT,
-        }
-        stop_pct = stop_map.get(regime)
-        if stop_pct is None:
-            return False
+        if exit_reason is None:
+            return False  # exit condition not met
 
+        log.info("Exit condition met for %s: %s", ticker, exit_reason)
+
+        # ── Dedup: skip resubmission if a sell order is already open ───────
+        # This prevents order spam and repeated alerts across consecutive bars
+        # while a pending sell order awaits a fill.
         try:
-            unrealized_pct = float(getattr(pos, "unrealized_plpc", 0.0))
-        except (TypeError, ValueError):
-            return False
+            open_orders = self._client.get_orders()
+            if any(
+                o.symbol.upper() == ticker.upper()
+                and str(getattr(o, "side", "")).lower() == "sell"
+                for o in open_orders
+            ):
+                log.info(
+                    "Exit: sell order already open for %s — waiting for fill", ticker
+                )
+                return True  # still block buy path
+        except Exception as exc:
+            log.warning("Exit: could not check open orders for %s: %s", ticker, exc)
 
-        if unrealized_pct <= stop_pct:
-            regime_name = _REGIME_NAMES.get(regime, str(regime))
-            log.info(
-                "Trailing stop hit: closing %s regime=%s unrealized=%.2f%% <= stop=%.2f%%",
-                ticker, regime_name, unrealized_pct * 100, stop_pct * 100,
-            )
-            self.close_position(ticker)
+        # ── Submit close order ─────────────────────────────────────────────
+        try:
+            mkt_value = float(getattr(pos, "market_value", 0.0))
+        except (TypeError, ValueError):
+            mkt_value = 0.0
+
+        order_result = self.close_position(ticker)
+
+        # Alert only when the order was actually sent — not on broker errors
+        if order_result is not None:
             alerts.send(
                 "trade_placed",
-                f"Stop-loss exit: {ticker}  side=sell  regime={regime_name}  "
-                f"unrealized={unrealized_pct:.1%}  stop={stop_pct:.1%}",
+                exit_reason,
                 "info",
-                symbol=ticker,
-                side="sell",
+                symbol  = ticker,
+                side    = "sell",
+                size_usd = mkt_value,
             )
-            return True
 
-        return False
+        return True  # block buy path regardless of order result
 
     def _maybe_close_on_crash(self, ticker: str) -> None:
         """Close any held equity position when crash regime is detected."""
