@@ -14,6 +14,9 @@ python-dotenv>=1.0.1
 # HTML parsing (pandas.read_html backend for Wikipedia universe fetch)
 lxml>=5.2.0
 
+# Options / earnings data for wheel scanner
+yfinance>=0.2.40
+
 # Technical indicators
 ta>=0.11.0           # RSI, ATR, SMA, etc.
 
