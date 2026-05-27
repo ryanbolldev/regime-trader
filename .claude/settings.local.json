@@ -82,7 +82,9 @@
       "Bash(python -m pytest tests/test_scanner.py::TestPaperValidationBanner -v)",
       "Bash(python -m pytest tests/test_scanner.py -q)",
       "Bash(python -m pytest tests/test_scanner.py::TestBatchTrainer -v)",
-      "Bash(python -m pytest tests/test_scanner.py::TestGetSuggestedStrategy -v)"
+      "Bash(python -m pytest tests/test_scanner.py::TestGetSuggestedStrategy -v)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\bollr\\\\regime_trader\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)"
     ]
   }
 }
