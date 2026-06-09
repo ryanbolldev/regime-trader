@@ -30,6 +30,7 @@ def _get_yfinance():
     """Return the yfinance module or None if not installed."""
     global _yf_warned
     try:
+        # pyrefly: ignore [missing-import]
         import yfinance as yf
         return yf
     except ImportError:
