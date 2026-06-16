@@ -259,6 +259,9 @@ def send_cycle_alert(signal: object, prev_score: float = 0.0) -> None:
 
     signal must be a CycleSignal dataclass instance. Using 'object' to avoid
     a circular import; duck-typing is safe here.
+
+    Also uses content-based deduplication: if the signal has not changed since
+    the last alert, suppress the duplicate.
     """
     try:
         from config.settings import CYCLE_COMPOSITE_THRESHOLD
@@ -269,6 +272,19 @@ def send_cycle_alert(signal: object, prev_score: float = 0.0) -> None:
 
         if not (failed or crossing):
             return
+
+        # Dedup: only send if signal content has changed since last send
+        _last_cycle_signal = getattr(send_cycle_alert, "_last_signal_hash", None)
+        signal_hash = hash((
+            round(score, 4),
+            failed,
+            getattr(signal, "days_since_last_low", 0),
+            round(getattr(signal, "timing_probability", 0.0), 3),
+        ))
+        if _last_cycle_signal == signal_hash:
+            log.debug("Cycle alert suppressed (no change in signal)")
+            return
+        send_cycle_alert._last_signal_hash = signal_hash
 
         translation_map = {"right": "right (bullish)", "left": "left (bearish)"}
         translation_str = translation_map.get(
