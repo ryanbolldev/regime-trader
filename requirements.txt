@@ -8,6 +8,10 @@ scipy>=1.13.0
 # Broker integration
 alpaca-py>=0.26.0
 
+# tastytrade options data (read-only chain + DXLink streaming: greeks, IV, open interest)
+tastytrade>=13.0.0
+truststore>=0.10.0   # validate TLS via OS trust store (local TLS-inspection proxies)
+
 # Configuration / secrets
 python-dotenv>=1.0.1
 

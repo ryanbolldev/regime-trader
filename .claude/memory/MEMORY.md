@@ -10,6 +10,7 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 ## User & Collaboration
 
 - [User preferences](user_preferences.md) — Ryan: direct feedback, values thorough specs before building, prefers parallel agents over sequential work
+- [.env is off-limits](feedback_env_offlimits.md) — never read/print credential values; verify creds via connection tests, not by inspecting secrets
 
 ---
 
@@ -51,6 +52,7 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 - [Wheel strategy integration spec](task_wheel_integration.md) — Spec needed: position entry conditions, sizing under risk manager, exit rules. Blocker: unclear when scanner candidates should trigger trades.
 - [Portfolio review logic design](task_portfolio_review.md) — Decision pending: quant rules-based (hard gates) vs agent-powered (Claude reviews nightly state). Each has tradeoffs; user needs to pick.
 - [Trade review agent architecture](task_trade_agent.md) — Spec needed: inputs (scanner result + market context), outputs (proceed / reduce_size / skip), data sources (news API).
+- [tastytrade options-data integration](task_tastytrade_integration.md) — OAuth2 read-only provider for wheel_scanner (open interest via DXLink Summary event); design resolved, build pending. Env vars TT_SECRET/TT_REFRESH.
 
 ---
 
