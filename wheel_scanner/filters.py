@@ -358,10 +358,10 @@ def filter_options_available(
 ) -> tuple[list[str], dict[str, int]]:
     """Exclude tickers without at least min_cycles active expiry cycles.
 
-    Calls count_expiry_cycles() from options_data for each ticker.
+    Calls count_expiry_cycles() from the active provider for each ticker.
     Includes a small inter-call delay to stay within rate limits.
     """
-    from wheel_scanner.options_data import count_expiry_cycles
+    from wheel_scanner.options_provider import count_expiry_cycles
 
     passing:   list[str] = []
     n_no_options = 0

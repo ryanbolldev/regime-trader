@@ -123,25 +123,38 @@ async def _fetch_put_chain_async(
         session, symbols, (Greeks, Quote, Summary, Trade)
     )
 
-    legs: list[WheelOptionLeg] = []
-    for o, dte in puts:
-        s = o.streamer_symbol
-        g, q, m, t = greeks.get(s), quotes.get(s), summaries.get(s), trades.get(s)
-        legs.append(WheelOptionLeg(
-            occ_symbol         = o.symbol,
-            underlying         = symbol,
-            expiration         = o.expiration_date,
-            strike             = float(o.strike_price),
-            option_type        = "put",
-            delta              = _safe_float(g.delta) if g else None,
-            implied_volatility = _safe_float(g.volatility) if g else None,
-            bid                = _safe_float(q.bid_price) if q else None,
-            ask                = _safe_float(q.ask_price) if q else None,
-            open_interest      = int(m.open_interest) if m and m.open_interest is not None else None,
-            volume_today       = int(t.day_volume) if t and t.day_volume is not None else None,
-            dte                = dte,
-        ))
-    return legs
+    return [
+        _leg_from_events(
+            o, symbol, dte,
+            greeks.get(o.streamer_symbol),
+            quotes.get(o.streamer_symbol),
+            summaries.get(o.streamer_symbol),
+            trades.get(o.streamer_symbol),
+        )
+        for o, dte in puts
+    ]
+
+
+def _leg_from_events(option, underlying: str, dte: int, greeks, quote, summary, trade) -> WheelOptionLeg:
+    """Assemble a WheelOptionLeg from an option contract and its DXLink events.
+
+    Any event may be absent (None) when it did not arrive within the stream
+    timeout — the corresponding fields degrade to None rather than failing.
+    """
+    return WheelOptionLeg(
+        occ_symbol         = option.symbol,
+        underlying         = underlying,
+        expiration         = option.expiration_date,
+        strike             = float(option.strike_price),
+        option_type        = "put",
+        delta              = _safe_float(greeks.delta) if greeks else None,
+        implied_volatility = _safe_float(greeks.volatility) if greeks else None,
+        bid                = _safe_float(quote.bid_price) if quote else None,
+        ask                = _safe_float(quote.ask_price) if quote else None,
+        open_interest      = int(summary.open_interest) if summary and summary.open_interest is not None else None,
+        volume_today       = int(trade.day_volume) if trade and trade.day_volume is not None else None,
+        dte                = dte,
+    )
 
 
 def count_expiry_cycles(symbol: str, session) -> int:

@@ -13,9 +13,9 @@ See also: [tastytrade integration memory](../.claude/memory/task_tastytrade_inte
 - [x] **Commit checkpoint** — connection test + `tastytrade` / `truststore` deps committed.
 - [x] **Extend `config/credentials.py`** — added `load_tastytrade_credentials()` + `TastytradeCredentials` (ALPACA independently required) and shared `enable_os_trust_store()` helper. Settings flag `OPTIONS_DATA_PROVIDER` (defaults `alpaca`) + `TASTYTRADE_USE_SANDBOX`. `.env.example` documents `TT_SECRET`/`TT_REFRESH`.
 - [x] **Build the adapter** — `wheel_scanner/options_data_tastytrade.py` maps Greeks/Quote/Summary/**Trade** → `WheelOptionLeg`. `volume_today` = `Trade.day_volume` (true parity, chosen). Verified live on MSTR (196 legs, delta/IV/bid/ask/OI populated). Refactored shared `realized_vol_range()` into `options_data.py` so IV Rank math is identical across providers.
-- [ ] **Wire the selector** — `OPTIONS_DATA_PROVIDER = "alpaca" | "tastytrade"` in `config/settings.py` + selection in `wheel_scanner`.
-- [ ] **Tests** — mocked unit tests (match existing all-mocked suite) + a guarded live smoke test.
-- [ ] **Validate parity** — diff `WheelOptionLeg` output tastytrade vs Alpaca on MSTR before flipping the provider flag.
+- [x] **Wire the selector** — new `wheel_scanner/options_provider.py` dispatch (fails loud on bad value); `scanner.py` + `filters.py` route through it. Default `alpaca`; all 75 scanner tests pass.
+- [x] **Tests** — `tests/test_options_provider.py`: 14 mocked tests (dispatch routing/fail-loud/delegation + adapter `_leg_from_events` mapping + `compute_ivr` combination/clamp). Full suite **994 passed**, no regressions.
+- [~] **Validate parity** — harness `scripts/tastytrade_parity_check.py` built; after-hours MSTR run: delta close (median|Δ|=0.014) but **IV gap large (median|Δ|=0.19)** and Alpaca OI all `None`. **GATE NOT PASSED** — re-run during market hours + investigate IV before flipping `OPTIONS_DATA_PROVIDER` to tastytrade.
 
 ## Follow-on (separate spec)
 

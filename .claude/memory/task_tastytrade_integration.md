@@ -34,4 +34,8 @@ Caveat: Summary carries `prev_day_volume`, not today's volume. `WheelOptionLeg.v
 - **Logging:** `build_session()` raises the `tastytrade` logger to WARNING (it attaches its own DEBUG handler that otherwise logs every websocket frame — ~200KB per fetch).
 - Perf note: `_collect` waits for all symbols or `_STREAM_TIMEOUT` (15s); Trade events rarely arrive for every strike, so each `fetch_put_chain` tends to hit the full 15s. Fine for nightly/MSTR-only; revisit if scanning a large universe.
 
+**Selector + tests done (2026-07):** `wheel_scanner/options_provider.py` dispatches on `OPTIONS_DATA_PROVIDER` (fails loud on bad value); `scanner.py`/`filters.py` route through it. `tests/test_options_provider.py` (14 tests). Full suite **994 passed**. Flag still defaults `alpaca`.
+
+**Parity — GATE NOT YET PASSED.** `scripts/tastytrade_parity_check.py` diffs Alpaca vs tastytrade `WheelOptionLeg` by (expiration, strike). Preliminary **after-hours** MSTR run (21-45 DTE): delta median|Δ|=0.014 (good); **IV median|Δ|=0.19 (too large — must investigate)**; bid/ask gaps look like after-hours staleness; Alpaca returned `open_interest=None` on all 169 matched (reinforces why we want tastytrade OI, but makes OI uncomparable); tastytrade offers more strikes (196 vs 169). Do NOT flip `OPTIONS_DATA_PROVIDER` to tastytrade until a **market-hours** re-run resolves the IV gap. This is a human-sign-off verification gate (data-source change).
+
 **Bigger pivot flagged (separate spec):** Ryan intends this app to become "strictly a wheel strategy application" and to **disable all other trading** (HMM/regime/BTC engines). That's a strategy change hitting the verification gates and needs its own spec — deliberately kept out of this integration.

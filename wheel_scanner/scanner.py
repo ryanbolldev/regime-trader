@@ -185,13 +185,12 @@ class WheelScanner:
 
     def _score_ticker(self, ticker: str) -> Optional["WheelCandidate"]:
         """Score a single ticker. Returns None if data is insufficient."""
+        from wheel_scanner.options_provider import fetch_put_chain, compute_ivr
         from wheel_scanner.options_data import (
-            fetch_put_chain,
             find_target_put,
             mid_price,
             annualized_yield_pct,
             bid_ask_spread_pct,
-            compute_ivr,
             fetch_ohlcv_for_sma,
             compute_sma_trend,
         )
@@ -316,13 +315,8 @@ class WheelScanner:
 
     @staticmethod
     def _build_options_client():
-        from alpaca.data.historical import OptionHistoricalDataClient
-        from config.credentials import load_credentials
-        creds = load_credentials()
-        return OptionHistoricalDataClient(
-            api_key    = creds.api_key,
-            secret_key = creds.api_secret,
-        )
+        from wheel_scanner.options_provider import build_options_client
+        return build_options_client()
 
     @staticmethod
     def _build_stock_client():
