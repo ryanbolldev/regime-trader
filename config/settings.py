@@ -186,6 +186,7 @@ SCANNER_PAPER_ONLY_DAYS     = 30          # paper-validation window after first 
 SCANNER_DATA_FEED           = 'iex'       # data feed for bar requests (paper account cannot use SIP)
 SCANNER_RUN_UTC_HOUR        = 11          # scheduler fire time — 11:00 UTC = 6 AM ET
 SCANNER_RUN_UTC_MINUTE      = 0
+WHEEL_REGIME_TICKER         = "SPY"       # market proxy trained by wheel_main for the scan's regime_label
 
 # Volatility estimator weights (combined vol rank proxy — no options API required)
 SCANNER_VOL_REALIZED_WEIGHT  = 0.50   # realized vol percentile rank weight

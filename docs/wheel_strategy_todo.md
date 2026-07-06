@@ -17,9 +17,16 @@ See also: [tastytrade integration memory](../.claude/memory/task_tastytrade_inte
 - [x] **Tests** — `tests/test_options_provider.py`: 14 mocked tests (dispatch routing/fail-loud/delegation + adapter `_leg_from_events` mapping + `compute_ivr` combination/clamp). Full suite **994 passed**, no regressions.
 - [~] **Validate parity** — harness `scripts/tastytrade_parity_check.py` built; after-hours MSTR run: delta close (median|Δ|=0.014) but **IV gap large (median|Δ|=0.19)** and Alpaca OI all `None`. **GATE NOT PASSED** — re-run during market hours + investigate IV before flipping `OPTIONS_DATA_PROVIDER` to tastytrade.
 
-## Follow-on (separate spec)
+## Wheel-only pivot — Phase 1 (strip-down, scan-only)
 
-- [ ] **Wheel-only pivot** — disable HMM / regime / BTC trading so this becomes strictly a wheel-strategy app. Strategy change → verification gate + its own spec. Kept out of the integration above.
+- [x] **Fork `wheel_main.py`** — wheel-only orchestrator: trains HMM on `WHEEL_REGIME_TICKER` (SPY) for regime context → regime-aware wheel scan (startup + nightly) → candidate alerts + `logs/wheel_state.json`. No BTC/regime/equity trading, no execution. `main.py` untouched.
+- [x] **Closes `gap_scanner_integration`** — scan now runs **in-process with the live regime** (was subprocess at default neutral). Added additive `on_fire` callback to `ScannerScheduler`.
+- [x] **Tests** — `tests/test_wheel_main.py` (19): regime wiring, retrain-each-cycle, scan effects, and a negative no-trading-imports guarantee. Full suite **1013 passed**.
+- [ ] **Optional live dry-run** — `python wheel_main.py` (startup + one real scan) to confirm end-to-end. Blocking/long; hits live data.
+
+## Wheel-only pivot — Phase 2 (execution, LATER spec)
+
+- [ ] **Wheel execution** — CSP entry → management → assignment → covered calls → risk sizing, via **Alpaca paper options**. Its own spec + verification gates.
 
 ---
 

@@ -39,6 +39,10 @@ class ScannerScheduler:
     utc_hour   : UTC hour  (0–23). Defaults to SCANNER_RUN_UTC_HOUR  (11 = 6 AM ET).
     utc_minute : UTC minute (0–59). Defaults to SCANNER_RUN_UTC_MINUTE (0).
     script     : Override path to run_scanner.py — useful in tests.
+    on_fire    : Optional callable invoked in-process at fire time instead of
+                 launching run_scanner.py as a subprocess. Lets an in-process
+                 owner (e.g. wheel_main) run the scan with the live HMM regime.
+                 Callback exceptions are logged and never propagate.
     """
 
     def __init__(
@@ -46,10 +50,12 @@ class ScannerScheduler:
         utc_hour:   int       = SCANNER_RUN_UTC_HOUR,
         utc_minute: int       = SCANNER_RUN_UTC_MINUTE,
         script:     Path | None = None,
+        on_fire:    "callable | None" = None,
     ) -> None:
         self._utc_hour   = utc_hour
         self._utc_minute = utc_minute
         self._script     = script or _SCRIPT
+        self._on_fire    = on_fire
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_run_date: date | None = None
@@ -91,7 +97,7 @@ class ScannerScheduler:
             now = datetime.now(tz=timezone.utc)
             if self._should_fire(now):
                 self._last_run_date = now.date()
-                self._run_scanner()
+                self._fire()
             # Wake early if stop() is called, else tick every minute
             self._stop_event.wait(timeout=_TICK_SECS)
 
@@ -104,6 +110,16 @@ class ScannerScheduler:
         if self._last_run_date == now.date():                     # already ran today
             return False
         return True
+
+    def _fire(self) -> None:
+        """Dispatch to the in-process callback if provided, else subprocess."""
+        if self._on_fire is not None:
+            try:
+                self._on_fire()
+            except Exception as exc:
+                log.error("ScannerScheduler: on_fire callback failed: %s", exc)
+            return
+        self._run_scanner()
 
     def _run_scanner(self) -> None:
         log.info("ScannerScheduler: launching %s", self._script)
