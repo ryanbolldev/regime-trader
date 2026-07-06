@@ -27,4 +27,11 @@ Caveat: Summary carries `prev_day_volume`, not today's volume. `WheelOptionLeg.v
 2. **Lazy token refresh:** `Session()` construction does NOT hit the network — the SDK refreshes the OAuth token on the *first* API call. So bad creds surface at the first real request, not at construction. Don't claim "creds valid" just because `Session()` returned.
    (Also: Windows console is cp1252 — reconfigure stdout/stderr to UTF-8 for box-drawing output.)
 
+**Adapter built (2026-07):** `wheel_scanner/options_data_tastytrade.py` mirrors the Alpaca provider's fetch surface (`fetch_put_chain`, `count_expiry_cycles`, `compute_ivr`, `build_session`) and emits `WheelOptionLeg`. Verified live on MSTR (196 legs; delta/IV/bid/ask/OI populated). Decisions/gotchas:
+- **`volume_today` = `Trade.day_volume`** (4th DXLink subscription, chosen for true parity with Alpaca's today's-volume semantics). It's `None` when a contract hasn't traded today / outside market hours — correct, not a bug.
+- **Persistent event loop required:** a tastytrade `Session`'s async httpx client binds to the first event loop it runs on, so `asyncio.run()` (closes its loop) breaks the *next* call with "Event loop is closed". The adapter reuses one module-level loop via `_run()`. Any future async tastytrade code must do the same.
+- **Shared IV-Rank math:** extracted `realized_vol_range()` into `options_data.py`; both providers use it so only the current-IV source differs. All 75 scanner tests pass after the refactor.
+- **Logging:** `build_session()` raises the `tastytrade` logger to WARNING (it attaches its own DEBUG handler that otherwise logs every websocket frame — ~200KB per fetch).
+- Perf note: `_collect` waits for all symbols or `_STREAM_TIMEOUT` (15s); Trade events rarely arrive for every strike, so each `fetch_put_chain` tends to hit the full 15s. Fine for nightly/MSTR-only; revisit if scanning a large universe.
+
 **Bigger pivot flagged (separate spec):** Ryan intends this app to become "strictly a wheel strategy application" and to **disable all other trading** (HMM/regime/BTC engines). That's a strategy change hitting the verification gates and needs its own spec — deliberately kept out of this integration.

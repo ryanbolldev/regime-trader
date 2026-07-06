@@ -294,7 +294,27 @@ def compute_ivr(
 
     current_iv = float(np.median(ivs))
 
-    # Historical realized vol as proxy for historical IV range
+    vol_range = realized_vol_range(symbol, stock_client, lookback_days)
+    if vol_range is None:
+        return None
+    iv_low, iv_high = vol_range
+
+    ivr = (current_iv - iv_low) / (iv_high - iv_low) * 100.0
+    return round(max(0.0, min(100.0, ivr)), 1)
+
+
+def realized_vol_range(
+    symbol:        str,
+    stock_client:  StockHistoricalDataClient,
+    lookback_days: int = 252,
+) -> Optional[tuple[float, float]]:
+    """Return (iv_low, iv_high): the min/max of 20-day rolling realized vol over
+    the lookback window, used as the historical IV-range proxy for IV Rank.
+
+    Provider-agnostic — shared by the Alpaca and tastytrade options providers so
+    both compute IV Rank identically; only the current-IV source differs.
+    Returns None when fewer than 30 bars are available or the range is degenerate.
+    """
     end   = datetime.datetime.now(datetime.timezone.utc)
     start = end - datetime.timedelta(days=int(lookback_days * 1.6))
 
@@ -312,7 +332,7 @@ def compute_ivr(
         except (KeyError, TypeError):
             bars = []
     except Exception as exc:
-        log.debug("compute_ivr [%s]: bar fetch failed: %s", symbol, exc)
+        log.debug("realized_vol_range [%s]: bar fetch failed: %s", symbol, exc)
         return None
 
     if len(bars) < 30:
@@ -333,8 +353,7 @@ def compute_ivr(
     if iv_high <= iv_low:
         return None
 
-    ivr = (current_iv - iv_low) / (iv_high - iv_low) * 100.0
-    return round(max(0.0, min(100.0, ivr)), 1)
+    return iv_low, iv_high
 
 
 # ---------------------------------------------------------------------------

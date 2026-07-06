@@ -42,14 +42,12 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-# Validate TLS against the OS trust store. Local TLS-inspection proxies (AV,
-# corporate) inject a root CA present in the Windows store but not in certifi,
-# which otherwise breaks the tastytrade handshake with CERTIFICATE_VERIFY_FAILED.
-import truststore
-
-truststore.inject_into_ssl()
-
 from dotenv import load_dotenv
+
+from config.credentials import enable_os_trust_store
+
+# Validate TLS against the OS trust store before any tastytrade HTTPS call.
+enable_os_trust_store()
 
 # Load credentials into os.environ without ever exposing their values here.
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
