@@ -262,6 +262,6 @@ WHEEL_IV_LOOKBACK_DAYS       = 252    # rolling window for IV Rank (1 trading ye
 # ---------------------------------------------------------------------------
 # Options data provider (wheel scanner)
 # ---------------------------------------------------------------------------
-OPTIONS_DATA_PROVIDER  = "alpaca"   # "alpaca" | "tastytrade"; stay on alpaca
-                                    # until tastytrade parity is validated
-TASTYTRADE_USE_SANDBOX = False      # data-only on live production (no orders)
+OPTIONS_DATA_PROVIDER  = "tastytrade"  # "alpaca" | "tastytrade"; flipped 2026-07-07
+                                       # after market-hours parity cleared + adds OI
+TASTYTRADE_USE_SANDBOX = False         # data-only on live production (no orders)

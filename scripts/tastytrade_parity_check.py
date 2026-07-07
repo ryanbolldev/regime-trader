@@ -52,12 +52,69 @@ def _key(leg) -> tuple:
     return (leg.expiration, round(leg.strike, 2))
 
 
-def _diffs(label: str, values: list[float]) -> str:
-    if not values:
-        return f"  {label:<16}: no overlap with both values present"
-    med = statistics.median(values)
-    mx = max(values)
-    return f"  {label:<16}: n={len(values):<4} median|Δ|={med:<10.4f} max|Δ|={mx:.4f}"
+def _pairs(common, a_by, t_by, attr: str) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for k in common:
+        a = getattr(a_by[k], attr)
+        t = getattr(t_by[k], attr)
+        if a is not None and t is not None:
+            out.append((float(a), float(t)))
+    return out
+
+
+def _corr(pairs: list[tuple[float, float]]) -> str:
+    if len(pairs) < 2:
+        return "n/a"
+    try:
+        return f"{statistics.correlation([a for a, _ in pairs], [t for _, t in pairs]):+.3f}"
+    except statistics.StatisticsError:
+        return "n/a"   # a constant series (e.g. all-equal) has undefined correlation
+
+
+def _stat_line(label: str, pairs: list[tuple[float, float]]) -> str:
+    if not pairs:
+        return f"  {label:<14}: no overlap with both values present"
+    diffs = [t - a for a, t in pairs]
+    absd  = [abs(d) for d in diffs]
+    return (
+        f"  {label:<14}: n={len(pairs):<4} "
+        f"median|Δ|={statistics.median(absd):<8.4f} "
+        f"bias(tt−alp)={statistics.fmean(diffs):+.4f} "
+        f"max|Δ|={max(absd):<8.4f} corr={_corr(pairs)}"
+    )
+
+
+def _iv_by_delta_bucket(common, a_by, t_by) -> str:
+    """IV gap split by moneyness (via |delta|) — isolates wing vs ATM behaviour."""
+    buckets: dict[str, list[tuple[float, float]]] = {
+        "deep OTM |Δ|<.15": [], "OTM .15–.35": [],
+        "ATM .35–.65": [],      "ITM |Δ|>.65": [],
+    }
+    for k in common:
+        a, t = a_by[k], t_by[k]
+        if a.implied_volatility is None or t.implied_volatility is None:
+            continue
+        d = t.delta if t.delta is not None else a.delta
+        if d is None:
+            continue
+        ad  = abs(d)
+        key = ("deep OTM |Δ|<.15" if ad < 0.15 else
+               "OTM .15–.35"      if ad < 0.35 else
+               "ATM .35–.65"      if ad < 0.65 else "ITM |Δ|>.65")
+        buckets[key].append((float(a.implied_volatility), float(t.implied_volatility)))
+
+    lines = []
+    for name, pairs in buckets.items():
+        if not pairs:
+            lines.append(f"    {name:<18}: (none)")
+            continue
+        diffs = [t - a for a, t in pairs]
+        lines.append(
+            f"    {name:<18}: n={len(pairs):<3} "
+            f"median|Δ|={statistics.median([abs(d) for d in diffs]):<7.4f} "
+            f"bias={statistics.fmean(diffs):+.4f}"
+        )
+    return "\n".join(lines)
 
 
 def run(symbol: str, min_dte: int, max_dte: int) -> None:
@@ -80,27 +137,22 @@ def run(symbol: str, min_dte: int, max_dte: int) -> None:
     print(f"  Matched (exp,strike): {len(common)}")
     print(_bar())
 
-    d_delta, d_iv, d_bid, d_ask, d_oi = [], [], [], [], []
-    for k in common:
-        a, t = a_by[k], t_by[k]
-        if a.delta is not None and t.delta is not None:
-            d_delta.append(abs(a.delta - t.delta))
-        if a.implied_volatility is not None and t.implied_volatility is not None:
-            d_iv.append(abs(a.implied_volatility - t.implied_volatility))
-        if a.bid is not None and t.bid is not None:
-            d_bid.append(abs(a.bid - t.bid))
-        if a.ask is not None and t.ask is not None:
-            d_ask.append(abs(a.ask - t.ask))
-        if a.open_interest is not None and t.open_interest is not None:
-            d_oi.append(abs(a.open_interest - t.open_interest))
+    print("  Field comparison on matched contracts — bias = mean(tt − alpaca):")
+    print(_stat_line("delta",         _pairs(common, a_by, t_by, "delta")))
+    print(_stat_line("implied_vol",   _pairs(common, a_by, t_by, "implied_volatility")))
+    print(_stat_line("bid",           _pairs(common, a_by, t_by, "bid")))
+    print(_stat_line("ask",           _pairs(common, a_by, t_by, "ask")))
+    print(_stat_line("open_interest", _pairs(common, a_by, t_by, "open_interest")))
 
-    print("  Absolute differences on matched contracts (Alpaca vs tastytrade):")
-    print(_diffs("delta", d_delta))
-    print(_diffs("implied_vol", d_iv))
-    print(_diffs("bid", d_bid))
-    print(_diffs("ask", d_ask))
-    print(_diffs("open_interest", [float(x) for x in d_oi]))
+    print(_bar())
+    print("  Implied-vol gap by moneyness (delta bucket):")
+    print(_iv_by_delta_bucket(common, a_by, t_by))
 
+    print(_bar())
+    print("  Reading it:")
+    print("    small median|Δ| + corr≈1 + bias≈0  → parity, safe to flip provider")
+    print("    small median|Δ| + corr≈1 + bias≠0  → systematic offset (re-baseline IV Rank)")
+    print("    large median|Δ| + low corr         → staleness/noise (re-run in market hours)")
     print(_bar("═"))
 
 
