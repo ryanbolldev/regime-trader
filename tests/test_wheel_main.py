@@ -76,9 +76,14 @@ def patched(monkeypatch, mock_hmm) -> dict:
     md = MagicMock()
     md.get_historical_bars.return_value = ohlcv
 
+    # compute() must return a real DataFrame — the regime warm-up iterates its
+    # tail rows through predict_current.
+    feat_df = pd.DataFrame(
+        np.random.default_rng(1).normal(size=(30, 3)),
+        columns=["f0", "f1", "f2"],
+    )
     fe = MagicMock()
-    fe.compute.return_value        = MagicMock()
-    fe.compute_latest.return_value = MagicMock(spec=pd.Series)
+    fe.compute.return_value = feat_df
 
     al = MagicMock()
 

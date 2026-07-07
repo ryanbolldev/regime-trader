@@ -37,14 +37,13 @@ import os
 import signal as signal_module
 import sys
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from broker.alpaca_client import AlpacaClient
 from config import settings
-from config.credentials import ConfigurationError
+from config.credentials import ConfigurationError, enable_os_trust_store
 from core import alerts, feature_engineering, market_data
 from core.hmm_engine import HMMEngine
 from core.risk_manager import RiskManager
@@ -63,6 +62,13 @@ _REGIME_NAMES = {-1: "unconfirmed", 0: "crash", 1: "bear",
 
 def _setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Windows consoles/files default to cp1252 and crash on log lines containing
+    # non-latin glyphs (e.g. the HMM's "state→regime" arrow). Force UTF-8.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
@@ -73,7 +79,10 @@ def _setup_logging() -> None:
         ch = logging.StreamHandler(sys.stdout)
         ch.setFormatter(fmt)
         root.addHandler(ch)
-    fh = logging.FileHandler(LOG_DIR / f"wheel_trader_{datetime.now().strftime('%Y%m%d')}.log")
+    fh = logging.FileHandler(
+        LOG_DIR / f"wheel_trader_{datetime.now().strftime('%Y%m%d')}.log",
+        encoding="utf-8",
+    )
     fh.setFormatter(fmt)
     root.addHandler(fh)
 
@@ -110,6 +119,11 @@ class WheelTrader:
 
     def startup(self) -> None:
         log.info("=== Wheel Trader starting up (scan-only) ===")
+
+        # This host runs a TLS-inspection proxy whose root CA is in the OS store
+        # but not certifi, so all outbound HTTPS (Alpaca, alerts, tastytrade)
+        # fails verification without routing through the OS trust store.
+        enable_os_trust_store()
 
         if self._lockfile.exists():
             msg = (
@@ -186,7 +200,14 @@ class WheelTrader:
 
     def _train_and_predict_regime(self) -> int:
         """Train the HMM on a fresh 2 years of the market-proxy ticker and return
-        the current regime. Retraining each cycle keeps the model non-stale."""
+        the current confirmed regime. Retraining each cycle keeps the model
+        non-stale.
+
+        The regime is read by replaying recent bars through predict_current so
+        the confirmation + flicker gates settle exactly as they would across the
+        live loop's bars — a single one-shot predict can never reach
+        CONFIRMATION_BARS and would always return -1 (unconfirmed).
+        """
         ticker = settings.WHEEL_REGIME_TICKER
         end    = datetime.now(tz=timezone.utc)
         start  = end - timedelta(days=730)
@@ -197,8 +218,10 @@ class WheelTrader:
         engine.fit(features)
         self._hmm = engine
 
-        latest = feature_engineering.compute_latest(ohlcv)
-        regime = engine.predict_current(latest)
+        warmup = settings.CONFIRMATION_BARS + settings.FLICKER_WINDOW
+        regime = -1
+        for _, row in features.iloc[-warmup:].iterrows():
+            regime = engine.predict_current(row)
         self._last_regime = regime
         return regime
 

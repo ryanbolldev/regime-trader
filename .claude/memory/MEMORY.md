@@ -67,6 +67,7 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 
 - [Settings & tuning](config_settings.md) — All parameters in config/settings.py; includes HMM tuning, regime allocations, risk limits (paper vs live), scanner filters. Edit here, not in code.
 - [Paper vs live mode](config_paper_live.md) — Paper: IEX data, low min volume (20k), equity trades enabled, looser risk limits. Live: SIP data, high min volume (1M), BTC-only, tight risk limits. Toggle: LIVE_ACCOUNT_MODE.
+- [TLS-inspection proxy](env_tls_proxy.md) — this host breaks ALL Python HTTPS (Alpaca/alerts/tastytrade) unless enable_os_trust_store() runs first; main.py/connection_test/run_scanner still lack it.
 - [Alert system cooldown](config_alerts.md) — Default 300s cooldown per event:symbol. Overridable via ALERT_COOLDOWN_OVERRIDES in settings. Cycle_signal uses fingerprint dedup on top of cooldown.
 
 ---
