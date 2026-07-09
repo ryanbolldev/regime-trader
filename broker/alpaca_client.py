@@ -312,11 +312,12 @@ class AlpacaClient:
     @_with_retry
     def submit_order(
         self,
-        symbol:      str,
-        qty:         float,
-        side:        str,
-        order_type:  str,
-        limit_price: Optional[float] = None,
+        symbol:          str,
+        qty:             float,
+        side:            str,
+        order_type:      str,
+        limit_price:     Optional[float] = None,
+        position_intent: Optional[str]   = None,
     ) -> OrderResult:
         request_id = str(uuid.uuid4())
 
@@ -329,6 +330,10 @@ class AlpacaClient:
         }
         if limit_price is not None:
             body["limit_price"] = str(limit_price)
+        # Option order intent (e.g. "sell_to_open", "buy_to_close"); Alpaca infers
+        # it otherwise, but stating it prevents a close being read as a new open.
+        if position_intent is not None:
+            body["position_intent"] = position_intent
 
         url = f"{self._base_url}/orders"
         try:

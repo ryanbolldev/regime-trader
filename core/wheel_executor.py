@@ -1,0 +1,232 @@
+"""
+core/wheel_executor.py
+-----------------------
+Phase 2a wheel executor — cash-secured put entry + management.
+
+One pass per interval, per candidate ticker:
+  1. reconcile broker state (WheelPositionStore) — alert on assignment/expiry
+  2. skip if a wheel order is already resting for the ticker
+  3. route by phase:
+       CASH      → maybe sell a new cash-secured put (regime + IV gate + caps + sizing)
+       PUT_SOLD  → compute P&L, ask the strategy whether to close early
+       ASSIGNED  → hold shares; covered calls are Phase 2b (handoff only)
+
+Selection and pricing use Alpaca's chain — the execution venue — so limit prices
+match where the order fills. The scanner's tastytrade data is upstream (candidate
+discovery). Nothing here runs unless wheel_main enables execution.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from broker.alpaca_client import _parse_occ_symbol
+from config import settings
+from core import alerts
+from core.wheel_position_store import WheelPositionStore, WheelRecord
+from core.wheel_strategy import WheelActionType, WheelState, WheelStrategy
+
+log = logging.getLogger(__name__)
+
+_OPEN_ORDER_STATUSES = {
+    "new", "accepted", "pending_new", "partially_filled", "held", "pending_replace",
+}
+
+
+def _mid(contract) -> Optional[float]:
+    if contract is None or contract.bid is None or contract.ask is None:
+        return None
+    if contract.bid <= 0 and contract.ask <= 0:
+        return None
+    return (contract.bid + contract.ask) / 2.0
+
+
+def _wheel_collateral(positions: list) -> float:
+    """Approximate capital already committed to wheel legs: short-put collateral
+    (strike × 100 × contracts) plus the market value of long shares."""
+    total = 0.0
+    for p in positions:
+        parsed = _parse_occ_symbol(p.symbol)
+        if parsed is None:
+            if p.qty > 0:
+                total += abs(float(p.market_value))
+            continue
+        _u, _e, opt_type, strike = parsed
+        if opt_type == "put" and p.qty < 0:
+            total += strike * 100 * abs(int(round(p.qty)))
+    return total
+
+
+class WheelExecutor:
+    """Drives cash-secured put entry + management for a set of candidate tickers."""
+
+    def __init__(self, client, store: Optional[WheelPositionStore] = None,
+                 strategy: Optional[WheelStrategy] = None) -> None:
+        self._client   = client
+        self._store    = store or WheelPositionStore()
+        self._strategy = strategy or WheelStrategy()
+
+    # ------------------------------------------------------------------
+
+    def open_tickers(self) -> list[str]:
+        """Tickers with a non-CASH wheel leg — always managed, even if the
+        scanner drops them from tonight's candidates."""
+        return [t for t, r in self._store.all().items() if r.phase != WheelState.CASH]
+
+    def run_once(self, candidates: list[str], regime: int, is_uncertain: bool) -> None:
+        positions   = self._client.get_positions()
+        open_orders = self._client.get_orders()
+        acct        = self._client.get_account()
+        nav         = float(acct.portfolio_value)
+        bp          = float(acct.options_buying_power)
+
+        deployed   = _wheel_collateral(positions)
+        open_count = sum(1 for r in self._store.all().values() if r.phase != WheelState.CASH)
+
+        for ticker in candidates:
+            try:
+                committed = self._process(
+                    ticker, positions, open_orders, regime, is_uncertain,
+                    nav, bp, deployed, open_count,
+                )
+                if committed > 0:
+                    deployed   += committed
+                    open_count += 1
+            except Exception:
+                log.exception("Wheel executor error for %s", ticker)
+
+    # ------------------------------------------------------------------
+
+    def _process(self, ticker, positions, open_orders, regime, is_uncertain,
+                 nav, bp, deployed, open_count) -> float:
+        res = self._store.reconcile(ticker, positions, current_regime=regime)
+        rec = res.record
+        if res.transition:
+            self._alert_transition(ticker, res.transition, rec)
+
+        if self._has_open_order(ticker, open_orders):
+            log.debug("Wheel [%s]: order already resting — skipping", ticker)
+            return 0.0
+
+        if rec.phase == WheelState.CASH:
+            return self._maybe_enter(ticker, rec, regime, is_uncertain, nav, bp, deployed, open_count)
+        if rec.phase == WheelState.PUT_SOLD:
+            self._manage_put(ticker, rec, regime, is_uncertain, nav, bp)
+            return 0.0
+        if rec.phase == WheelState.ASSIGNED:
+            log.info("Wheel [%s]: ASSIGNED — holding %d shares (covered calls = Phase 2b)",
+                     ticker, rec.shares_owned)
+        return 0.0
+
+    # -- entry ----------------------------------------------------------
+
+    def _maybe_enter(self, ticker, rec, regime, is_uncertain, nav, bp, deployed, open_count) -> float:
+        if open_count >= settings.MAX_WHEEL_POSITIONS:
+            log.info("Wheel [%s]: at max positions (%d) — no new entry",
+                     ticker, settings.MAX_WHEEL_POSITIONS)
+            return 0.0
+
+        chain   = self._client.get_option_chain(ticker)
+        iv_rank = self._client.get_iv_rank(ticker)
+        action  = self._strategy.get_next_action(
+            position=rec.to_wheel_position(), current_regime=regime, option_chain=chain,
+            portfolio_nav=nav, buying_power=bp, is_uncertain=is_uncertain,
+            current_pnl_pct=0.0, iv_rank=iv_rank,
+        )
+        if action.action != WheelActionType.SELL_PUT or action.contract is None:
+            log.debug("Wheel [%s]: no entry (%s: %s)", ticker, action.action.value, action.reason)
+            return 0.0
+
+        contract        = action.contract
+        collateral_each = contract.strike * 100
+        budget = min(
+            nav * settings.WHEEL_MAX_COLLATERAL_PCT,
+            nav * settings.WHEEL_TOTAL_DEPLOYED_PCT - deployed,
+            bp,
+        )
+        contracts = int(budget // collateral_each)
+        if contracts < 1:
+            log.info("Wheel [%s]: budget $%.0f < 1 contract collateral $%.0f — skip",
+                     ticker, budget, collateral_each)
+            return 0.0
+
+        limit = _mid(contract)
+        if limit is None:
+            log.info("Wheel [%s]: no quote for %s — skip", ticker, contract.symbol)
+            return 0.0
+        limit = round(limit * (1 - settings.WHEEL_LIMIT_SLIPPAGE_PCT), 2)
+
+        self._client.submit_order(
+            symbol=contract.symbol, qty=contracts, side="sell",
+            order_type="limit", limit_price=limit, position_intent="sell_to_open",
+        )
+        committed = collateral_each * contracts
+        log.info("Wheel [%s]: SELL_PUT %d× %s @ $%.2f (collateral $%.0f, %s)",
+                 ticker, contracts, contract.symbol, limit, committed, action.reason)
+        self._alert(ticker, f"SELL_PUT {contracts}× {contract.symbol} @ ${limit:.2f} "
+                            f"(delta {contract.delta}, collateral ${committed:,.0f})")
+        return committed
+
+    # -- management -----------------------------------------------------
+
+    def _manage_put(self, ticker, rec: WheelRecord, regime, is_uncertain, nav, bp) -> None:
+        chain = self._client.get_option_chain(ticker)
+        active = next((c for c in chain if c.symbol == rec.active_contract), None)
+        mark = _mid(active)
+
+        pnl_pct = 0.0
+        if mark is not None and rec.active_contract_premium > 0:
+            pnl_pct = (rec.active_contract_premium - mark) / rec.active_contract_premium
+
+        action = self._strategy.get_next_action(
+            position=rec.to_wheel_position(), current_regime=regime, option_chain=chain,
+            portfolio_nav=nav, buying_power=bp, is_uncertain=is_uncertain,
+            current_pnl_pct=pnl_pct, iv_rank=None,
+        )
+        if action.action != WheelActionType.CLOSE:
+            log.debug("Wheel [%s]: holding put (pnl %.0f%%)", ticker, pnl_pct * 100)
+            return
+
+        close_limit = mark if mark is not None else (active.ask if active else None)
+        if close_limit is None:
+            log.warning("Wheel [%s]: cannot price close for %s — skip", ticker, rec.active_contract)
+            return
+        close_limit = round(close_limit, 2)
+
+        self._client.submit_order(
+            symbol=rec.active_contract, qty=rec.contracts, side="buy",
+            order_type="limit", limit_price=close_limit, position_intent="buy_to_close",
+        )
+        log.info("Wheel [%s]: CLOSE %d× %s @ $%.2f (pnl %.0f%%, %s)",
+                 ticker, rec.contracts, rec.active_contract, close_limit, pnl_pct * 100, action.reason)
+        self._alert(ticker, f"CLOSE {rec.contracts}× {rec.active_contract} @ ${close_limit:.2f} "
+                            f"(pnl {pnl_pct * 100:.0f}%, {action.reason})")
+
+    # -- helpers --------------------------------------------------------
+
+    def _has_open_order(self, ticker: str, open_orders: list) -> bool:
+        for o in open_orders:
+            if str(getattr(o, "status", "")).lower() not in _OPEN_ORDER_STATUSES:
+                continue
+            parsed = _parse_occ_symbol(getattr(o, "symbol", ""))
+            if parsed and parsed[0].upper() == ticker.upper():
+                return True
+        return False
+
+    def _alert_transition(self, ticker, transition, rec: WheelRecord) -> None:
+        if transition == "PUT_SOLD->ASSIGNED":
+            self._alert(ticker, f"PUT ASSIGNED — now holding {rec.shares_owned} shares "
+                                f"(cost ${rec.cost_basis:.2f}); covered-call phase (2b) not yet enabled",
+                        severity="warning")
+        elif transition == "PUT_SOLD->CASH":
+            self._alert(ticker, f"put closed/expired — premium retained "
+                                f"(lifetime ${rec.premium_collected_total:,.0f})")
+        else:
+            self._alert(ticker, f"phase transition {transition}")
+
+    def _alert(self, ticker, message, severity="info") -> None:
+        try:
+            alerts.send("wheel_execution", f"[{ticker}] {message}", severity, symbol=ticker)
+        except Exception:
+            pass

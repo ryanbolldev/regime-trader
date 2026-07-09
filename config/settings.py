@@ -265,3 +265,13 @@ WHEEL_IV_LOOKBACK_DAYS       = 252    # rolling window for IV Rank (1 trading ye
 OPTIONS_DATA_PROVIDER  = "tastytrade"  # "alpaca" | "tastytrade"; flipped 2026-07-07
                                        # after market-hours parity cleared + adds OI
 TASTYTRADE_USE_SANDBOX = False         # data-only on live production (no orders)
+
+# ---------------------------------------------------------------------------
+# Wheel execution (Phase 2a — cash-secured puts). Gated OFF by default.
+# ---------------------------------------------------------------------------
+WHEEL_EXECUTION_ENABLED   = False    # master switch — True = wheel_main places option orders
+WHEEL_EXEC_INTERVAL_SECS  = 900      # how often the execution pass runs (15 min)
+MAX_WHEEL_POSITIONS       = 2        # max concurrent open wheel legs (limited capital)
+WHEEL_MAX_COLLATERAL_PCT  = 0.35     # per-position collateral ceiling as fraction of NAV
+WHEEL_TOTAL_DEPLOYED_PCT  = 0.70     # total wheel collateral ceiling as fraction of NAV
+WHEEL_LIMIT_SLIPPAGE_PCT  = 0.00     # 0 = sell at mid; >0 shades the limit toward the bid

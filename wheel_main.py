@@ -48,6 +48,7 @@ from core import alerts, feature_engineering, market_data
 from core.hmm_engine import HMMEngine
 from core.risk_manager import RiskManager
 from core.scheduler import ScannerScheduler
+from core.wheel_executor import WheelExecutor
 from wheel_scanner import WheelScanner
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ class WheelTrader:
 
         self._hmm: Optional[HMMEngine] = None
         self._scheduler: Optional[ScannerScheduler] = None
+        self._executor: Optional[WheelExecutor] = None
         self._scan_lock  = threading.Lock()
         self._stop_event = threading.Event()
         self._running    = False
@@ -191,12 +193,42 @@ class WheelTrader:
         if self._scan_on_startup:
             self._run_scan()
 
+        exec_on = settings.WHEEL_EXECUTION_ENABLED
+        log.info("Wheel execution: %s", "ENABLED" if exec_on else "disabled (scan-only)")
+        interval = settings.WHEEL_EXEC_INTERVAL_SECS if exec_on else IDLE_INTERVAL_SECS
+
         while self._running:
-            self._stop_event.wait(timeout=IDLE_INTERVAL_SECS)
+            if exec_on:
+                self._run_wheel_execution()
+            self._stop_event.wait(timeout=interval)
 
     # ------------------------------------------------------------------
     # Regime + scan
     # ------------------------------------------------------------------
+
+    def _run_wheel_execution(self) -> None:
+        """One cash-secured-put execution pass over scanner candidates + any
+        open wheel positions. Only runs when WHEEL_EXECUTION_ENABLED."""
+        if self._executor is None:
+            self._executor = WheelExecutor(client=self._client)
+
+        scan_tickers = [c.ticker for c in self._last_candidates]
+        candidates = list(dict.fromkeys(
+            [*scan_tickers, *settings.WHEEL_TICKERS, *self._executor.open_tickers()]
+        ))
+        if not candidates:
+            return
+
+        is_uncertain = self._hmm.is_uncertain() if self._hmm is not None else True
+        log.info(
+            "Wheel execution pass: %d ticker(s), regime=%s uncertain=%s",
+            len(candidates), _REGIME_NAMES.get(self._last_regime, self._last_regime),
+            is_uncertain,
+        )
+        try:
+            self._executor.run_once(candidates, self._last_regime, is_uncertain)
+        except Exception:
+            log.exception("Wheel execution pass failed")
 
     def _train_and_predict_regime(self) -> int:
         """Train the HMM on a fresh 2 years of the market-proxy ticker and return

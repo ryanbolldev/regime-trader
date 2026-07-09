@@ -81,3 +81,26 @@ def env_credentials(monkeypatch):
 def tmp_lockfile_path(tmp_path):
     """Return a Path inside pytest's tmp_path for lockfile tests."""
     return tmp_path / "regime_trader.lock"
+
+
+@pytest.fixture(autouse=True)
+def mark_test_alerts(request, monkeypatch):
+    """Session-wide safety net for alerts fired during tests.
+
+    Replaces core.alerts.send with a stub that (1) marks the message
+    "THIS IS JUST A TEST" so a stray notification can never be mistaken for a
+    real trade, and (2) does not deliver, so tests never reach Telegram/email.
+    test_alerts.py exercises real alert content/delivery and opts out.
+    """
+    if "test_alerts" in request.module.__name__:
+        return
+
+    import logging
+    import core.alerts as _alerts
+
+    def _marked_no_send(event_type, message, severity="info", **kwargs):
+        logging.getLogger("tests.alerts").info(
+            "THIS IS JUST A TEST — %s [%s]: %s", event_type, severity, message
+        )
+
+    monkeypatch.setattr(_alerts, "send", _marked_no_send)

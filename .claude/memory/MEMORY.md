@@ -52,7 +52,8 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 - [Wheel strategy integration spec](task_wheel_integration.md) — Spec needed: position entry conditions, sizing under risk manager, exit rules. Blocker: unclear when scanner candidates should trigger trades.
 - [Portfolio review logic design](task_portfolio_review.md) — Decision pending: quant rules-based (hard gates) vs agent-powered (Claude reviews nightly state). Each has tradeoffs; user needs to pick.
 - [Trade review agent architecture](task_trade_agent.md) — Spec needed: inputs (scanner result + market context), outputs (proceed / reduce_size / skip), data sources (news API).
-- [tastytrade options-data integration](task_tastytrade_integration.md) — OAuth2 read-only provider for wheel_scanner (open interest via DXLink Summary event); design resolved, build pending. Env vars TT_SECRET/TT_REFRESH.
+- [tastytrade options-data integration](task_tastytrade_integration.md) — OAuth2 read-only provider for wheel_scanner (open interest via DXLink Summary event); COMPLETE, flag flipped to tastytrade. Env vars TT_SECRET/TT_REFRESH.
+- [Wheel execution (Phase 2)](task_wheel_execution.md) — WheelStrategy brain already built; Phase 2a = CSP entry+mgmt, hybrid state, scanner-driven+caps, NAV sizing. Step 0 PASSED: Alpaca paper CAN sell-to-open puts via API. Build pending sign-off.
 
 ---
 
