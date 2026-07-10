@@ -144,6 +144,15 @@ CYCLE_BOLLINGER_WEIGHT     = 0.25
 IS_EQUITY_HOURS_ONLY = True   # block equity orders when market is closed
 
 # ---------------------------------------------------------------------------
+# Global trading master switch (main.py equity/BTC system)
+# ---------------------------------------------------------------------------
+# False = block all NEW equity + BTC entries in main.py. Protective exits
+# (crash close, trailing stops, BTC REDUCE/EXIT) still fire so open positions
+# can always be de-risked. The wheel strategy (wheel_main.py) is independent
+# and unaffected by this flag.
+TRADING_ENABLED            = False
+
+# ---------------------------------------------------------------------------
 # Live account mode
 # ---------------------------------------------------------------------------
 LIVE_ACCOUNT_MODE          = False   # Set True only for live deployment

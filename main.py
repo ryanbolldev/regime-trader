@@ -431,6 +431,12 @@ class RegimeTrader:
             )
             return
 
+        # Global trading master switch — block new equity entries (exits above
+        # this point still fire so open positions can be de-risked).
+        if not settings.TRADING_ENABLED:
+            log.info("Trading disabled (TRADING_ENABLED=False): %s entry blocked", ticker)
+            return
+
         # MSTR-BTC correlation guard: MSTR carries ~2.5× BTC beta; block new
         # MSTR buys when combined effective BTC exposure already exceeds the cap.
         if ticker.upper() == "MSTR":
@@ -609,6 +615,12 @@ class RegimeTrader:
         )
 
         if action.action == "HOLD":
+            return
+
+        # Global trading master switch — block new BTC entries; REDUCE/EXIT/SELL
+        # (de-risking) still proceed below.
+        if action.action == "BUY" and not settings.TRADING_ENABLED:
+            log.info("Trading disabled (TRADING_ENABLED=False): %s BTC entry blocked", ticker)
             return
 
         log.info(

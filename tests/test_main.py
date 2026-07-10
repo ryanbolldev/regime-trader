@@ -1146,6 +1146,101 @@ class TestMSTRCorrelationGuard:
 
 
 # ---------------------------------------------------------------------------
+# TestTradingEnabledSwitch
+# ---------------------------------------------------------------------------
+
+class TestTradingEnabledSwitch:
+    """TRADING_ENABLED=False blocks new equity + BTC entries; exits still fire."""
+
+    def _wire_equity_buy(self, mock_client, mock_hmm, mock_risk):
+        mock_client.is_market_open.return_value = True
+        mock_client.get_positions.return_value  = []
+        mock_hmm.predict_current.return_value   = 3
+        mock_risk.approve.return_value = MagicMock(
+            approved=True, size_multiplier=1.0, reason="approved"
+        )
+
+    def _wire_btc(self, trader, mock_client, act, size=1000.0, target=0.10, positions=None):
+        action = MagicMock()
+        action.action = act
+        action.size_usd = size
+        action.reason = "test"
+        btc_strategy = MagicMock()
+        btc_strategy.get_target_allocation.return_value = target
+        btc_strategy.get_action.return_value = action
+        trader._btc_strategy = btc_strategy
+        mock_client.get_positions.return_value = positions or []
+        cycle_signal = MagicMock()
+        cycle_signal.composite_score = 0.7
+        mock_cycle_eng = MagicMock()
+        mock_cycle_eng.get_cycle_signal.return_value = cycle_signal
+        hmm = MagicMock()
+        hmm.is_uncertain.return_value = False
+        hmm.is_confirmed.return_value = True
+        return MagicMock(return_value=mock_cycle_eng), hmm
+
+    # -- equity ---------------------------------------------------------
+
+    def test_equity_entry_blocked_when_disabled(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "TRADING_ENABLED", False)
+        self._wire_equity_buy(mock_client, mock_hmm, mock_risk)
+        trader._process_ticker("AAPL")
+        patch_modules["oe"].submit.assert_not_called()
+
+    def test_equity_entry_allowed_when_enabled(
+        self, trader, mock_client, mock_hmm, mock_risk, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "TRADING_ENABLED", True)
+        self._wire_equity_buy(mock_client, mock_hmm, mock_risk)
+        trader._process_ticker("AAPL")
+        patch_modules["oe"].submit.assert_called()
+
+    # -- BTC ------------------------------------------------------------
+
+    def test_btc_entry_blocked_when_disabled(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "TRADING_ENABLED", False)
+        cycle_cls, hmm = self._wire_btc(trader, mock_client, "BUY")
+        with patch("core.cycle_engine.CycleEngine", cycle_cls):
+            trader._process_btc("BTC/USD", _synthetic_ohlcv(), 3, hmm)
+        patch_modules["oe"].submit_crypto_order.assert_not_called()
+
+    def test_btc_entry_allowed_when_enabled(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        import config.settings as s
+        monkeypatch.setattr(s, "TRADING_ENABLED", True)
+        cycle_cls, hmm = self._wire_btc(trader, mock_client, "BUY")
+        patch_modules["oe"].submit_crypto_order.return_value = MagicMock()
+        with patch("core.cycle_engine.CycleEngine", cycle_cls):
+            trader._process_btc("BTC/USD", _synthetic_ohlcv(), 3, hmm)
+        patch_modules["oe"].submit_crypto_order.assert_called()
+
+    def test_btc_exit_still_fires_when_disabled(
+        self, trader, mock_client, patch_modules, monkeypatch
+    ):
+        """Safety: the kill switch must never trap a position — exits still run."""
+        import config.settings as s
+        monkeypatch.setattr(s, "TRADING_ENABLED", False)
+        pos = MagicMock()
+        pos.symbol = "BTC/USD"; pos.qty = "0.02"; pos.avg_entry_price = "45000.0"
+        pos.market_value = "900.0"; pos.unrealized_pl = "-100.0"
+        cycle_cls, hmm = self._wire_btc(
+            trader, mock_client, "EXIT", target=0.0, positions=[pos]
+        )
+        patch_modules["oe"].submit_crypto_order.return_value = MagicMock()
+        with patch("core.cycle_engine.CycleEngine", cycle_cls):
+            trader._process_btc("BTC/USD", _synthetic_ohlcv(), 1, hmm)
+        patch_modules["oe"].submit_crypto_order.assert_called()
+
+
+# ---------------------------------------------------------------------------
 # TestExitSignals
 # ---------------------------------------------------------------------------
 
