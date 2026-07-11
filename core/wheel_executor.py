@@ -75,6 +75,10 @@ class WheelExecutor:
         return [t for t, r in self._store.all().items() if r.phase != WheelState.CASH]
 
     def run_once(self, candidates: list[str], regime: int, is_uncertain: bool) -> None:
+        market_open = self._client.is_market_open()
+        if not market_open:
+            log.info("Wheel executor: market closed — reconciling state only, no orders")
+
         positions   = self._client.get_positions()
         open_orders = self._client.get_orders()
         acct        = self._client.get_account()
@@ -88,7 +92,7 @@ class WheelExecutor:
             try:
                 committed = self._process(
                     ticker, positions, open_orders, regime, is_uncertain,
-                    nav, bp, deployed, open_count,
+                    nav, bp, deployed, open_count, market_open,
                 )
                 if committed > 0:
                     deployed   += committed
@@ -99,15 +103,21 @@ class WheelExecutor:
     # ------------------------------------------------------------------
 
     def _process(self, ticker, positions, open_orders, regime, is_uncertain,
-                 nav, bp, deployed, open_count) -> float:
+                 nav, bp, deployed, open_count, market_open) -> float:
         res = self._store.reconcile(ticker, positions, current_regime=regime)
         rec = res.record
         if res.transition:
             self._alert_transition(ticker, res.transition, rec)
 
-        if self._has_open_order(ticker, open_orders):
-            log.debug("Wheel [%s]: order already resting — skipping", ticker)
+        # Orders only during market hours — reconcile + alerts above still run so
+        # overnight assignment/expiry is detected and alerted the next morning.
+        if not market_open:
             return 0.0
+
+        # Cancel any resting wheel order for this underlying so the decision below
+        # re-prices on fresh quotes instead of leaving a stale limit that would
+        # freeze the ticker until the day order expires.
+        self._cancel_resting_orders(ticker, open_orders)
 
         if rec.phase == WheelState.CASH:
             return self._maybe_enter(ticker, rec, regime, is_uncertain, nav, bp, deployed, open_count)
@@ -205,14 +215,21 @@ class WheelExecutor:
 
     # -- helpers --------------------------------------------------------
 
-    def _has_open_order(self, ticker: str, open_orders: list) -> bool:
+    def _cancel_resting_orders(self, ticker: str, open_orders: list) -> None:
+        """Cancel any resting option order on this underlying so the next decision
+        re-prices on fresh quotes. On the wheel-dedicated account every option
+        order is the wheel's; equity orders (non-OCC symbols) are left untouched."""
         for o in open_orders:
             if str(getattr(o, "status", "")).lower() not in _OPEN_ORDER_STATUSES:
                 continue
             parsed = _parse_occ_symbol(getattr(o, "symbol", ""))
             if parsed and parsed[0].upper() == ticker.upper():
-                return True
-        return False
+                try:
+                    self._client.cancel_order(o.order_id)
+                    log.info("Wheel [%s]: cancelled stale order %s (%s)",
+                             ticker, str(o.order_id)[:8], o.symbol)
+                except Exception:
+                    log.warning("Wheel [%s]: cancel failed for order on %s", ticker, o.symbol)
 
     def _alert_transition(self, ticker, transition, rec: WheelRecord) -> None:
         if transition == "PUT_SOLD->ASSIGNED":

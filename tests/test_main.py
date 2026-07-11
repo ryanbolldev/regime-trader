@@ -127,6 +127,12 @@ def patch_modules(monkeypatch, mock_hmm) -> dict:
     monkeypatch.setattr("main.order_executor",     oe)
     monkeypatch.setattr("main.position_tracker",   pt)
 
+    # Decouple these tests from the production TRADING_ENABLED value (which is
+    # turned off for the wheel-only account). Tests exercising the kill switch
+    # override this explicitly.
+    import config.settings as _s
+    monkeypatch.setattr(_s, "TRADING_ENABLED", True)
+
     return {"md": md, "fe": fe, "al": al, "oe": oe, "pt": pt, "hmm_cls": hmm_cls}
 
 

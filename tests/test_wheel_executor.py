@@ -43,6 +43,7 @@ def env(tmp_path):
         portfolio_value=100_000.0, options_buying_power=100_000.0)
     client.get_option_chain.return_value = []
     client.get_iv_rank.return_value      = 50.0
+    client.is_market_open.return_value   = True
     store = WheelPositionStore(path=tmp_path / "wp.json")
     strat = MagicMock()
     return client, store, strat
@@ -123,12 +124,25 @@ class TestManagement:
 
 class TestGuards:
 
-    def test_skips_ticker_with_open_order(self, env):
+    def test_cancels_stale_order_then_reprices(self, env):
         client, store, strat = env
-        client.get_orders.return_value = [SimpleNamespace(symbol=PUT, status="new")]
+        client.get_orders.return_value = [
+            SimpleNamespace(symbol=PUT, status="new", order_id="abc12345")
+        ]
         strat.get_next_action.return_value = _sell_put(_contract())
         WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
-        client.submit_order.assert_not_called()
+        client.cancel_order.assert_called_once_with("abc12345")  # stale order pulled
+        client.submit_order.assert_called_once()                 # re-priced entry
+
+    def test_non_option_order_not_cancelled(self, env):
+        client, store, strat = env
+        # a plain-equity resting order (non-OCC symbol) must never be touched
+        client.get_orders.return_value = [
+            SimpleNamespace(symbol="MSTR", status="new", order_id="equity01")
+        ]
+        strat.get_next_action.return_value = _sell_put(_contract())
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        client.cancel_order.assert_not_called()
 
     def test_assigned_places_no_order(self, env):
         client, store, strat = env
@@ -149,3 +163,30 @@ class TestGuards:
         client.get_positions.return_value = [_pos("MSTR", 100, avg=100.0, mv=9500.0)]
         ex.run_once(["MSTR"], 3, False)
         assert any("ASSIGNED" in a[1] for a in sent)
+
+
+class TestMarketHours:
+
+    def test_market_closed_places_no_orders(self, env):
+        client, store, strat = env
+        client.is_market_open.return_value = False
+        strat.get_next_action.return_value = _sell_put(_contract())
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        client.submit_order.assert_not_called()
+        client.cancel_order.assert_not_called()
+
+    def test_market_closed_still_reconciles_and_alerts(self, env, monkeypatch):
+        client, store, strat = env
+        client.is_market_open.return_value = False
+        sent = []
+        monkeypatch.setattr("core.wheel_executor.alerts",
+                            SimpleNamespace(send=lambda *a, **k: sent.append(a)))
+        ex = WheelExecutor(client, store, strat)
+        client.get_positions.return_value = [_pos(PUT, -1, avg=2.5)]       # PUT_SOLD
+        ex.run_once(["MSTR"], 3, False)
+        client.get_positions.return_value = [_pos("MSTR", 100, avg=100.0, mv=9500.0)]  # assigned
+        ex.run_once(["MSTR"], 3, False)
+        # assignment detected + alerted even though the market is closed …
+        assert any("ASSIGNED" in a[1] for a in sent)
+        # … but no orders were placed
+        client.submit_order.assert_not_called()
