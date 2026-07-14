@@ -23,7 +23,9 @@ from core.wheel_strategy import WheelAction, WheelActionType
 PUT = "MSTR260821P00100000"   # MSTR 2026-08-21 put, strike 100
 
 
-def _contract(symbol=PUT, strike=100.0, bid=2.0, ask=3.0, delta=-0.28, otype="put"):
+def _contract(symbol=PUT, strike=100.0, bid=2.45, ask=2.55, delta=-0.28, otype="put"):
+    # default is a tight two-sided market (mid 2.50, 4% spread) that clears the
+    # execution spread gate; individual tests widen it to exercise rejection.
     return SimpleNamespace(symbol=symbol, underlying="MSTR", expiration="2026-08-21",
                            strike=strike, option_type=otype, delta=delta,
                            bid=bid, ask=ask, implied_volatility=0.9)
@@ -97,6 +99,20 @@ class TestEntry:
         WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
         client.submit_order.assert_not_called()
 
+    def test_blocks_entry_when_iv_rank_none(self, env):
+        # missing IV data must block, not silently bypass the IV gate
+        client, store, strat = env
+        client.get_iv_rank.return_value = None
+        strat.get_next_action.return_value = _sell_put(_contract())
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        client.submit_order.assert_not_called()
+
+    def test_skips_wide_spread(self, env):
+        client, store, strat = env
+        strat.get_next_action.return_value = _sell_put(_contract(bid=1.0, ask=3.0))  # 100% spread
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        client.submit_order.assert_not_called()
+
 
 class TestManagement:
 
@@ -111,7 +127,7 @@ class TestManagement:
         assert kw["side"] == "buy"
         assert kw["position_intent"] == "buy_to_close"
         assert kw["qty"] == 1
-        assert kw["limit_price"] == 1.1
+        assert kw["limit_price"] == 1.2   # marketable — at the ask, not the mid
 
     def test_holds_put_on_wait(self, env):
         client, store, strat = env
@@ -120,6 +136,28 @@ class TestManagement:
         strat.get_next_action.return_value   = WheelAction(WheelActionType.WAIT, None, "hold", 3)
         WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
         client.submit_order.assert_not_called()
+
+    def test_missing_mark_alerts_and_suspends_pnl(self, env, monkeypatch):
+        client, store, strat = env
+        sent = []
+        monkeypatch.setattr("core.wheel_executor.alerts",
+                            SimpleNamespace(send=lambda *a, **k: sent.append(a)))
+        client.get_positions.return_value    = [_pos(PUT, -1, avg=2.5)]   # PUT_SOLD
+        client.get_option_chain.return_value = []                          # active leg absent → no mark
+        strat.get_next_action.return_value   = WheelAction(WheelActionType.WAIT, None, "hold", 3)
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        assert any("cannot price" in a[1] for a in sent)
+        client.submit_order.assert_not_called()
+
+    def test_order_failure_alerts(self, env, monkeypatch):
+        client, store, strat = env
+        sent = []
+        monkeypatch.setattr("core.wheel_executor.alerts",
+                            SimpleNamespace(send=lambda *a, **k: sent.append(a)))
+        client.submit_order.side_effect = Exception("403 Forbidden")
+        strat.get_next_action.return_value = _sell_put(_contract())
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)   # must not raise
+        assert any("ORDER FAILED" in a[1] for a in sent)
 
 
 class TestGuards:

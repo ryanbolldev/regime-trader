@@ -42,6 +42,18 @@ def _mid(contract) -> Optional[float]:
     return (contract.bid + contract.ask) / 2.0
 
 
+def _spread_ok(contract, max_pct: float) -> bool:
+    """True if the contract has a real two-sided market with a spread no wider
+    than max_pct of the mid — a mid off a one-sided or blown-out book is a
+    meaningless limit price."""
+    if contract is None or contract.bid is None or contract.ask is None:
+        return False
+    if contract.bid <= 0 or contract.ask <= 0 or contract.ask < contract.bid:
+        return False
+    mid = (contract.bid + contract.ask) / 2.0
+    return mid > 0 and (contract.ask - contract.bid) / mid <= max_pct
+
+
 def _wheel_collateral(positions: list) -> float:
     """Approximate capital already committed to wheel legs: short-put collateral
     (strike × 100 × contracts) plus the market value of long shares."""
@@ -99,6 +111,7 @@ class WheelExecutor:
                     open_count += 1
             except Exception:
                 log.exception("Wheel executor error for %s", ticker)
+                self._alert(ticker, "executor error — see logs", severity="warning")
 
     # ------------------------------------------------------------------
 
@@ -137,9 +150,15 @@ class WheelExecutor:
                      ticker, settings.MAX_WHEEL_POSITIONS)
             return 0.0
 
-        chain   = self._client.get_option_chain(ticker)
+        # No IV data → block the entry rather than silently bypassing the IV
+        # gate (get_next_action skips the gate when iv_rank is None).
         iv_rank = self._client.get_iv_rank(ticker)
-        action  = self._strategy.get_next_action(
+        if iv_rank is None:
+            log.info("Wheel [%s]: IV rank unavailable — blocking entry (no-data)", ticker)
+            return 0.0
+
+        chain  = self._client.get_option_chain(ticker)
+        action = self._strategy.get_next_action(
             position=rec.to_wheel_position(), current_regime=regime, option_chain=chain,
             portfolio_nav=nav, buying_power=bp, is_uncertain=is_uncertain,
             current_pnl_pct=0.0, iv_rank=iv_rank,
@@ -148,7 +167,12 @@ class WheelExecutor:
             log.debug("Wheel [%s]: no entry (%s: %s)", ticker, action.action.value, action.reason)
             return 0.0
 
-        contract        = action.contract
+        contract = action.contract
+        if not _spread_ok(contract, settings.WHEEL_MAX_SPREAD_PCT):
+            log.info("Wheel [%s]: %s spread too wide / one-sided (bid=%s ask=%s) — skip",
+                     ticker, contract.symbol, contract.bid, contract.ask)
+            return 0.0
+
         collateral_each = contract.strike * 100
         budget = min(
             nav * settings.WHEEL_MAX_COLLATERAL_PCT,
@@ -161,16 +185,13 @@ class WheelExecutor:
                      ticker, budget, collateral_each)
             return 0.0
 
-        limit = _mid(contract)
-        if limit is None:
-            log.info("Wheel [%s]: no quote for %s — skip", ticker, contract.symbol)
-            return 0.0
-        limit = round(limit * (1 - settings.WHEEL_LIMIT_SLIPPAGE_PCT), 2)
-
-        self._client.submit_order(
-            symbol=contract.symbol, qty=contracts, side="sell",
+        limit  = round(_mid(contract) * (1 - settings.WHEEL_LIMIT_SLIPPAGE_PCT), 2)
+        result = self._submit(
+            ticker, symbol=contract.symbol, qty=contracts, side="sell",
             order_type="limit", limit_price=limit, position_intent="sell_to_open",
         )
+        if result is None:
+            return 0.0
         committed = collateral_each * contracts
         log.info("Wheel [%s]: SELL_PUT %d× %s @ $%.2f (collateral $%.0f, %s)",
                  ticker, contracts, contract.symbol, limit, committed, action.reason)
@@ -181,9 +202,18 @@ class WheelExecutor:
     # -- management -----------------------------------------------------
 
     def _manage_put(self, ticker, rec: WheelRecord, regime, is_uncertain, nav, bp) -> None:
-        chain = self._client.get_option_chain(ticker)
+        chain  = self._client.get_option_chain(ticker)
         active = next((c for c in chain if c.symbol == rec.active_contract), None)
-        mark = _mid(active)
+        mark   = _mid(active)
+
+        if mark is None:
+            # Can't price the open leg → the 50% / 200% / gamma P&L triggers can't
+            # evaluate. Surface it loudly rather than silently suspending stops;
+            # the regime-based close is still assessed below (it needs no mark).
+            log.warning("Wheel [%s]: no quote for open leg %s — P&L stops suspended this pass",
+                        ticker, rec.active_contract)
+            self._alert(ticker, f"cannot price open leg {rec.active_contract} — "
+                                f"P&L stops suspended until quote returns", severity="warning")
 
         pnl_pct = 0.0
         if mark is not None and rec.active_contract_premium > 0:
@@ -198,22 +228,41 @@ class WheelExecutor:
             log.debug("Wheel [%s]: holding put (pnl %.0f%%)", ticker, pnl_pct * 100)
             return
 
-        close_limit = mark if mark is not None else (active.ask if active else None)
+        # Buy-to-close at the ask so a decided exit actually fills — paying up is
+        # worth the certainty, especially for a regime-driven close.
+        close_limit = active.ask if (active and active.ask and active.ask > 0) else mark
         if close_limit is None:
             log.warning("Wheel [%s]: cannot price close for %s — skip", ticker, rec.active_contract)
             return
         close_limit = round(close_limit, 2)
 
-        self._client.submit_order(
-            symbol=rec.active_contract, qty=rec.contracts, side="buy",
+        result = self._submit(
+            ticker, symbol=rec.active_contract, qty=rec.contracts, side="buy",
             order_type="limit", limit_price=close_limit, position_intent="buy_to_close",
         )
+        if result is None:
+            return
         log.info("Wheel [%s]: CLOSE %d× %s @ $%.2f (pnl %.0f%%, %s)",
                  ticker, rec.contracts, rec.active_contract, close_limit, pnl_pct * 100, action.reason)
         self._alert(ticker, f"CLOSE {rec.contracts}× {rec.active_contract} @ ${close_limit:.2f} "
                             f"(pnl {pnl_pct * 100:.0f}%, {action.reason})")
 
     # -- helpers --------------------------------------------------------
+
+    def _submit(self, ticker: str, **kwargs):
+        """Submit an order, alerting on failure so a rejected entry/close is never
+        silently swallowed."""
+        try:
+            return self._client.submit_order(**kwargs)
+        except Exception as exc:
+            log.exception("Wheel [%s]: order submit failed", ticker)
+            self._alert(
+                ticker,
+                f"ORDER FAILED: {kwargs.get('side')} {kwargs.get('symbol')} "
+                f"— {type(exc).__name__}: {exc}",
+                severity="warning",
+            )
+            return None
 
     def _cancel_resting_orders(self, ticker: str, open_orders: list) -> None:
         """Cancel any resting option order on this underlying so the next decision

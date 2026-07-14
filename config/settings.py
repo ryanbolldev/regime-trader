@@ -284,3 +284,5 @@ MAX_WHEEL_POSITIONS       = 2        # max concurrent open wheel legs (limited c
 WHEEL_MAX_COLLATERAL_PCT  = 0.35     # per-position collateral ceiling as fraction of NAV
 WHEEL_TOTAL_DEPLOYED_PCT  = 0.70     # total wheel collateral ceiling as fraction of NAV
 WHEEL_LIMIT_SLIPPAGE_PCT  = 0.00     # 0 = sell at mid; >0 shades the limit toward the bid
+WHEEL_MAX_SPREAD_PCT      = 0.20     # skip a NEW entry if the option's bid-ask spread
+                                     # exceeds this fraction of mid (execution liquidity sanity)
