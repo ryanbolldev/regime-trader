@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+from alpaca.data.enums import DataFeed
 from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -325,6 +326,7 @@ def realized_vol_range(
                 timeframe         = TimeFrame.Day,
                 start             = start,
                 end               = end,
+                feed              = DataFeed.IEX,   # paper accounts are denied recent SIP data
             )
         )
         try:
@@ -381,6 +383,7 @@ def fetch_ohlcv_for_sma(
                 timeframe         = TimeFrame.Day,
                 start             = start,
                 end               = end,
+                feed              = DataFeed.IEX,   # paper accounts are denied recent SIP data
             )
         )
         try:

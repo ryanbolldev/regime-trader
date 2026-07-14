@@ -451,6 +451,35 @@ class TestGetOptionChain:
 
 
 # ---------------------------------------------------------------------------
+# TestGetIVRank
+# ---------------------------------------------------------------------------
+
+class TestGetIVRank:
+
+    def test_realized_vol_bars_use_iex_feed(self, client, monkeypatch):
+        """Regression: paper accounts are denied recent SIP data, so the bar
+        fetch must request the IEX feed or get_iv_rank returns None for all."""
+        import datetime as _dt
+        from types import SimpleNamespace
+        from alpaca.data.enums import DataFeed
+
+        exp = (_dt.date.today() + _dt.timedelta(days=35)).isoformat()
+        monkeypatch.setattr(
+            client, "get_option_chain",
+            lambda s: [SimpleNamespace(implied_volatility=0.30, expiration=exp)],
+        )
+        bars = [SimpleNamespace(close=100.0 + i) for i in range(40)]
+        client._stocks = MagicMock()
+        client._stocks.get_stock_bars.return_value = {"AAPL": bars}
+
+        result = client.get_iv_rank("AAPL")
+
+        assert result is not None
+        request = client._stocks.get_stock_bars.call_args.args[0]
+        assert request.feed == DataFeed.IEX
+
+
+# ---------------------------------------------------------------------------
 # TestIsMarketOpen
 # ---------------------------------------------------------------------------
 

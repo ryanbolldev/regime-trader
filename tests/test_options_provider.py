@@ -155,3 +155,22 @@ class TestTastytradeComputeIvr:
         monkeypatch.setattr(tt, "_run", lambda coro: 2.0)
         monkeypatch.setattr(tt, "realized_vol_range", lambda *a, **k: (0.5, 1.5))
         assert tt.compute_ivr("MSTR", MagicMock(), MagicMock()) == 100.0
+
+
+class TestRealizedVolRangeFeed:
+
+    def test_bars_use_iex_feed(self):
+        """Regression: paper accounts are denied recent SIP data, so both
+        providers' IV Rank silently went None until the bar fetch requested IEX."""
+        from types import SimpleNamespace
+        from alpaca.data.enums import DataFeed
+
+        stock_client = MagicMock()
+        bars = [SimpleNamespace(close=100.0 + i) for i in range(40)]
+        stock_client.get_stock_bars.return_value = {"AMD": bars}
+
+        result = od.realized_vol_range("AMD", stock_client)
+
+        assert result is not None
+        request = stock_client.get_stock_bars.call_args.args[0]
+        assert request.feed == DataFeed.IEX

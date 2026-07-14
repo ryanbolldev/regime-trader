@@ -32,6 +32,7 @@ import datetime as _dt
 
 import numpy as np
 import requests
+from alpaca.data.enums import DataFeed
 from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -527,6 +528,7 @@ class AlpacaClient:
                     timeframe=TimeFrame.Day,
                     start=start,
                     end=end,
+                    feed=DataFeed.IEX,   # paper accounts are denied recent SIP data
                 )
             )
             try:
