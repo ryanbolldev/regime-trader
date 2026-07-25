@@ -1,9 +1,12 @@
 # Core ML / statistics
 hmmlearn>=0.3.2
 scikit-learn>=1.4.0
-numpy>=1.26.0
+# Upper bounds are load-bearing: hmmlearn 0.3.x is not numpy-2 clean, and
+# scipy>=1.16 hard-requires numpy>=2.0. Unpinned, pip pulled scipy 1.18 against
+# numpy 1.26 and broke the whole suite ("numpy has no attribute 'long'").
+numpy>=1.26.0,<2.0
 pandas>=2.2.0
-scipy>=1.13.0
+scipy>=1.13.0,<1.16
 
 # Broker integration
 alpaca-py>=0.26.0
