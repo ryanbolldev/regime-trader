@@ -400,7 +400,9 @@ def main() -> None:
         logging.critical("Credential error: %s", exc)
         sys.exit(1)
 
-    _trader = WheelTrader(client=client, risk_manager=RiskManager())
+    lockfile_override = os.environ.get("WHEEL_LOCKFILE")
+    lockfile = Path(lockfile_override) if lockfile_override else LOCKFILE
+    _trader = WheelTrader(client=client, risk_manager=RiskManager(), lockfile=lockfile)
 
     signal_module.signal(signal_module.SIGINT,  _signal_handler)
     signal_module.signal(signal_module.SIGTERM, _signal_handler)

@@ -21,6 +21,26 @@ services:
       - "8501:8501"
     restart: "no"
 
+  wheel:
+    build: .
+    # wheel_main.py is a self-scheduling daemon (core/scheduler.py runs a UTC-
+    # clock background thread) — no external cron/Task Scheduler needed here
+    # or on the eventual Hetzner host. Just keep the process alive.
+    command: python wheel_main.py
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+      # tmpfs so a crash (OOM/kill) never leaves a stale lockfile behind to
+      # block the next auto-restart — wheel_trading.lock resets every restart.
+      # mode 1777 (world-writable + sticky) since the app runs as non-root appuser.
+      - type: tmpfs
+        target: /app/run
+        tmpfs:
+          mode: 0o1777
+    environment:
+      - WHEEL_LOCKFILE=/app/run/wheel_trading.lock
+    restart: unless-stopped
+
   scanner:
     build: .
     # Runs at 06:00 ET (11:00 UTC) Mon–Fri via cron inside the container.
