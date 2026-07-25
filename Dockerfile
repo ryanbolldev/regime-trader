@@ -13,6 +13,10 @@ COPY --chown=appuser:appgroup . .
 RUN mkdir -p /app/logs \
     && chown -R appuser:appgroup /app
 
+# appuser has no home dir (--no-create-home); point HOME at /app (already
+# writable) so libraries that cache under ~/.cache (yfinance, etc.) don't fail.
+ENV HOME=/app
+
 USER appuser
 
 CMD ["python", "main.py"]

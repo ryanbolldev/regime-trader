@@ -126,6 +126,7 @@ def filter_price_and_volume(
     Uses Alpaca StockHistoricalDataClient in 50-ticker batches.
     Returns (passing_tickers, {reason: count}).
     """
+    from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
 
@@ -147,6 +148,7 @@ def filter_price_and_volume(
                     timeframe         = TimeFrame.Day,
                     start             = start,
                     end               = end,
+                    feed              = DataFeed.IEX,   # paper accounts are denied recent SIP data
                 )
             )
         except Exception as exc:
