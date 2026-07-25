@@ -1,7 +1,7 @@
 # Regime Trader — Claude Code Workflow
 
 **Owner**: Ryan  
-**Last Updated**: 2026-06-09  
+**Last Updated**: 2026-07-25  
 **Model Context**: Refer to `.claude/memory/` for project state, past decisions, and outstanding tasks.
 
 ---
@@ -99,18 +99,20 @@ For all others: test pass + code review is sufficient.
 ## Spec Requirements by Project Phase
 
 ### Wheel Strategy
-**Status**: Module complete (scanner built, pending integration)  
-**Current phase**: Scanner → Live loop integration
+**Status**: Phase 2a live — CSP entry/management deployed as the `wheel` Docker service, `WHEEL_EXECUTION_ENABLED=True`, hardened (market-hours gate, order cancel/reprice, spread + missing-mark + order-failure safeguards).  
+**Current phase**: Monitoring live executions; Phase 2b (assignment handling, covered calls) not started.
 
-**Specs needed**:
-- Position entry logic (when scanner candidates → actual trades)
-- Position management (exit rules, loss limits, profit targets)
-- Integration with risk manager (sizing under circuit breakers)
+**Resolved**:
+- Position entry logic — `core/wheel_executor.py`, scanner-driven candidates + NAV-scaled sizing under caps
+- Position management — P&L-based early close, gamma-risk DTE close, regime-driven close
+- Risk manager integration — collateral caps (`WHEEL_MAX_COLLATERAL_PCT`, `WHEEL_TOTAL_DEPLOYED_PCT`, `MAX_WHEEL_POSITIONS`)
 
-**Verification gates**:
-- Options data flow validation (Alpaca chain availability)
-- IV gate testing (min IV rank enforcement)
-- Collateral calculation accuracy
+**Verification gates — passed**:
+- Options data flow validated (Alpaca chain + tastytrade discovery; 3 separate SIP-feed bugs found and fixed)
+- IV gate tested (`WHEEL_MIN_IV_RANK`; missing IV data blocks entry rather than bypassing the gate)
+- Collateral calculation verified live in the deployed container
+
+**Still open**: Phase 2b (assignment + covered calls), `SCANNER_RUN_UTC_HOUR` still fires pre-market, legacy equity `scanner` Docker container crash-looping (unrelated, not yet fixed).
 
 ### Portfolio Review Logic
 **Status**: Design phase (quant vs agent decision pending)
@@ -165,7 +167,11 @@ For all others: test pass + code review is sufficient.
 - `core/risk_manager.py` — circuit breaker logic
 - `config/settings.py` — all tunable parameters
 - `core/alerts.py` — notifications (email, webhook)
-- `main.py` — live trading loop
+- `main.py` — equity/BTC live trading loop (`TRADING_ENABLED=False`)
+- `wheel_main.py` — wheel-only live loop (self-scheduling daemon; deployed as the `wheel` Docker service)
+- `core/wheel_executor.py` — wheel order execution (CSP entry/management, safety gates)
+- `core/wheel_position_store.py` — hybrid wheel position state (broker truth + persisted economics)
+- `wheel_scanner/` — options income candidate scanner (tastytrade + Alpaca providers)
 
 ---
 
@@ -229,25 +235,35 @@ I will save the correction to memory for future conversations.
 ## Progress Tracking
 
 **Current Active Work**:
-- [ ] Wheel scanner: live loop integration (accept scanner output, filter by regime)
 - [ ] Portfolio review logic: design phase (quant vs agent decision)
 - [ ] Trade review agent: pending architecture design
-- [ ] Duplicate alert dedup: COMPLETE (cycle_signal alerts fixed)
+- [ ] Phase 2b: assignment handling + covered calls (not started)
+- [ ] Fix broken legacy equity `scanner` Docker container (crash-looping, missing cron)
+- [ ] Fix `SCANNER_RUN_UTC_HOUR` (still fires pre-market, 5 AM CT)
 
 **Completed**:
-- [x] Wheel scanner module (standalone, fully functional)
-- [x] yfinance added to dependencies
-- [x] Cycle signal alert deduplication (fingerprint-based)
+- [x] Wheel scanner module (tastytrade + Alpaca providers, regime-aware)
+- [x] tastytrade options-data integration (OAuth2, parity-validated, flipped live)
+- [x] TRADING_ENABLED kill switch (equity/BTC system safely disabled)
+- [x] Alpaca account dedicated to wheel strategy (positions closed, flat)
+- [x] Phase 2a wheel execution: CSP entry/management, hybrid state store
+- [x] Wheel executor hardening: market-hours gate, order cancel/reprice lifecycle
+- [x] Wheel safety batch: None-IV block, missing-mark alerts, order-failure alerts, marketable close pricing, spread sanity gate
+- [x] Fixed 3 separate SIP-feed bugs (paper account denied SIP; IEX feed now used everywhere)
+- [x] `wheel` Docker service deployed — self-scheduling daemon, live with `WHEEL_EXECUTION_ENABLED=True`
+- [x] Duplicate alert dedup (cycle_signal fingerprint-based)
 - [x] HMM regime classification (5 states)
 - [x] BTC cycle engine (60-day timing)
 - [x] Risk manager (4-layer circuit breakers)
-- [x] Full test suite (900+ tests)
+- [x] Full test suite (1050 tests)
 
 ---
 
 ## Notes for Next Session
 
-- Wheel strategy integration: how to wire scanner output → position entries
+- Watch the first live market session for an actual CSP placement now that execution is enabled and regime is bull
+- Fix the broken legacy equity `scanner` Docker container (crash-looping since creation — missing cron binary in the slim image)
+- Fix `SCANNER_RUN_UTC_HOUR` (currently 5 AM CT / pre-market — wrong window for options data quality)
 - Portfolio review: decide on quant rules vs agent-powered approach
 - Trade review agent: design spec needed before building
-- Consider launching sub-agents for parallel work (trade agent design + portfolio logic)
+- Phase 2b spec: assignment handling + covered calls

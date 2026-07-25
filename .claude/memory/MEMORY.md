@@ -11,6 +11,7 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 
 - [User preferences](user_preferences.md) — Ryan: direct feedback, values thorough specs before building, prefers parallel agents over sequential work
 - [.env is off-limits](feedback_env_offlimits.md) — never read/print credential values; verify creds via connection tests, not by inspecting secrets
+- [Concurrent manual commits](feedback_concurrent_commits.md) — Ryan commits mid-session sometimes (past issues w/ Claude committing); don't treat surprise commits as bugs
 
 ---
 
@@ -75,5 +76,4 @@ This index tracks decisions, architecture, blockers, and state across sessions. 
 
 ## References & Documentation
 
-- [Mirror & Feedback systems](ref_kinri.md) — From earlier Kinri project; not part of regime_trader. Reference only for workflow patterns.
 - [Weekly meeting notes](ref_meetings.md) — TBD: will track strategy discussions, tuning decisions, live trading outcomes.
