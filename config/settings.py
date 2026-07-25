@@ -278,7 +278,7 @@ TASTYTRADE_USE_SANDBOX = False         # data-only on live production (no orders
 # ---------------------------------------------------------------------------
 # Wheel execution (Phase 2a — cash-secured puts). Gated OFF by default.
 # ---------------------------------------------------------------------------
-WHEEL_EXECUTION_ENABLED   = False    # master switch — True = wheel_main places option orders
+WHEEL_EXECUTION_ENABLED   = True    # master switch — True = wheel_main places option orders
 WHEEL_EXEC_INTERVAL_SECS  = 900      # how often the execution pass runs (15 min)
 MAX_WHEEL_POSITIONS       = 2        # max concurrent open wheel legs (limited capital)
 WHEEL_MAX_COLLATERAL_PCT  = 0.35     # per-position collateral ceiling as fraction of NAV
