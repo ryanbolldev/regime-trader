@@ -164,6 +164,19 @@ def _parse_occ_symbol(symbol: str) -> tuple[str, str, str, float] | None:
     )
 
 
+def format_occ_symbol(symbol: str) -> str:
+    """Human-readable option description, e.g. 'PCVX $60 Put exp 2026-09-18'.
+
+    Falls back to the raw symbol if it doesn't parse as an OCC contract.
+    """
+    parsed = _parse_occ_symbol(symbol)
+    if parsed is None:
+        return symbol
+    underlying, expiry, opt_type, strike = parsed
+    strike_str = f"{strike:.2f}".rstrip("0").rstrip(".")
+    return f"{underlying} ${strike_str} {opt_type.capitalize()} exp {expiry}"
+
+
 # ---------------------------------------------------------------------------
 # Internal error helpers
 # ---------------------------------------------------------------------------

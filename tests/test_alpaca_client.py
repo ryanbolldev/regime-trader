@@ -26,6 +26,7 @@ from broker.alpaca_client import (
     OrderResult,
     RateLimitError,
     _parse_occ_symbol,
+    format_occ_symbol,
 )
 from config.credentials import Credentials
 
@@ -168,6 +169,25 @@ class TestOCCParser:
 
     def test_empty_string_returns_none(self):
         assert _parse_occ_symbol("") is None
+
+
+class TestFormatOCCSymbol:
+    """Human-readable contract descriptions for alerts and the dashboard."""
+
+    def test_put_formatted(self):
+        assert format_occ_symbol("PCVX260918P00060000") == "PCVX $60 Put exp 2026-09-18"
+
+    def test_call_formatted(self):
+        assert format_occ_symbol("AAPL250117C00150000") == "AAPL $150 Call exp 2025-01-17"
+
+    def test_fractional_strike_keeps_decimals(self):
+        assert format_occ_symbol("TSLA250117C00247500") == "TSLA $247.5 Call exp 2025-01-17"
+
+    def test_non_occ_symbol_passes_through(self):
+        assert format_occ_symbol("MSTR") == "MSTR"
+
+    def test_empty_string_passes_through(self):
+        assert format_occ_symbol("") == ""
 
 
 # ---------------------------------------------------------------------------

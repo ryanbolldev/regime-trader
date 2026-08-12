@@ -13,19 +13,27 @@ Run with:
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
+# `streamlit run dashboard/app.py` puts THIS file's directory on sys.path, not
+# the repo root — add the root so project imports resolve.
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from broker.alpaca_client import format_occ_symbol  # noqa: E402
+
 _REFRESH_SECS = 30
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-_ROOT      = Path(__file__).parent.parent
 _STATE_FILE = _ROOT / "logs" / "dashboard_state.json"
+_WHEEL_FILE = _ROOT / "logs" / "wheel_state.json"
 _LOCKFILE   = _ROOT / "trading.lock"
 
 # ---------------------------------------------------------------------------
@@ -82,20 +90,33 @@ def _load_state() -> dict[str, Any]:
         return dict(_DEFAULT_STATE)
 
 
+def _load_wheel_state() -> dict[str, Any]:
+    """Wheel state is written by wheel_main.py on its own cadence — a missing
+    file just means the wheel service isn't running."""
+    try:
+        return json.loads(_WHEEL_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def _color_for(regime_name: str) -> str:
     return _REGIME_COLOR.get(regime_name.lower(), "#AAAAAA")
 
 
-def _fmt_pct(value: float | None) -> str:
-    if value is None:
+def _fmt_pct(value: Any) -> str:
+    # State is JSON from another process — a non-numeric value means that writer
+    # is broken, so degrade to a placeholder instead of taking the page down.
+    try:
+        return f"{float(value):+.2%}"
+    except (TypeError, ValueError):
         return "—"
-    return f"{value:+.2%}"
 
 
-def _fmt_dollars(value: float | None) -> str:
-    if value is None:
+def _fmt_dollars(value: Any) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
         return "—"
-    return f"${value:,.2f}"
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +134,8 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Load state
 # ---------------------------------------------------------------------------
-state = _load_state()
+state       = _load_state()
+wheel_state = _load_wheel_state()
 
 # ---------------------------------------------------------------------------
 # Header
@@ -247,6 +269,9 @@ with col5:
     if positions:
         import pandas as pd
         df_pos = pd.DataFrame(positions)
+        # Broker symbols are raw OCC for option legs — show the readable contract.
+        if "symbol" in df_pos.columns:
+            df_pos["symbol"] = df_pos["symbol"].map(format_occ_symbol)
         st.dataframe(df_pos, use_container_width=True, hide_index=True)
     else:
         st.info("No open positions.")
@@ -264,6 +289,53 @@ with col6:
     p1.metric("Sharpe Ratio",  f"{sharpe:.2f}"    if sharpe   is not None else "—")
     p2.metric("Max Drawdown",  _fmt_pct(max_dd)   if max_dd   is not None else "—")
     p3.metric("Win Rate",      _fmt_pct(win_rate)  if win_rate is not None else "—")
+
+# ============================================================
+# Row 4 — Wheel Strategy
+# ============================================================
+if wheel_state:
+    st.divider()
+    st.subheader("Wheel Strategy")
+
+    w1, w2, w3, w4 = st.columns(4)
+    w1.metric("Regime",          str(wheel_state.get("regime", "—")).upper())
+    w2.metric("NAV",             _fmt_dollars(wheel_state.get("nav")))
+    w3.metric("Open legs",       len(wheel_state.get("open_positions") or []))
+    w4.metric("Scan candidates", wheel_state.get("candidate_count", 0))
+
+    st.caption(f"Wheel state updated: {wheel_state.get('updated_at') or '—'}")
+
+    wcol1, wcol2 = st.columns(2)
+
+    with wcol1:
+        st.markdown("**Open Positions**")
+        wheel_positions = wheel_state.get("open_positions") or []
+        if wheel_positions:
+            import pandas as pd
+            df_wheel = pd.DataFrame(wheel_positions)
+            df_wheel = df_wheel.rename(columns={
+                "ticker":                  "Ticker",
+                "phase":                   "Phase",
+                "contract":                "Contract",
+                "contracts":               "Qty",
+                "dte":                     "DTE",
+                "shares_owned":            "Shares",
+                "cost_basis":              "Cost Basis",
+                "premium_collected_total": "Premium (lifetime)",
+            })
+            st.dataframe(df_wheel, use_container_width=True, hide_index=True)
+        else:
+            st.info("No open wheel positions.")
+
+    with wcol2:
+        st.markdown("**Top Scan Candidates**")
+        wheel_candidates = wheel_state.get("candidates") or []
+        if wheel_candidates:
+            import pandas as pd
+            df_cand = pd.DataFrame(wheel_candidates)
+            st.dataframe(df_cand, use_container_width=True, hide_index=True)
+        else:
+            st.info("No candidates from the last scan.")
 
 # ---------------------------------------------------------------------------
 # Auto-refresh every 30 seconds (native — no extra dependency required)

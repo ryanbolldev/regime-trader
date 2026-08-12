@@ -11,6 +11,7 @@ All external I/O is mocked. Emphasis on two guarantees:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -202,6 +203,56 @@ class TestScanEffects:
             patched["scanner_cls"].assert_not_called()
         finally:
             trader._scan_lock.release()
+
+
+class TestWheelStatePositions:
+    """Open legs reach the dashboard state, formatted, at execution cadence."""
+
+    def _record(self, contract: str = "MSTR260904P00085000"):
+        from core.wheel_position_store import WheelRecord
+        from core.wheel_strategy import WheelState
+        return WheelRecord(
+            symbol="MSTR", phase=WheelState.PUT_SOLD, shares_owned=0, cost_basis=0.0,
+            active_contract=contract, active_contract_premium=4.50, contracts=3,
+            premium_collected_total=1350.0, entry_regime=3,
+            timestamp=datetime(2026, 7, 28, tzinfo=timezone.utc),
+        )
+
+    def test_contract_is_human_readable(self, trader):
+        trader._executor = MagicMock()
+        trader._executor.open_positions.return_value = [self._record()]
+        row = trader._position_rows()[0]
+        assert row["contract"] == "MSTR $85 Put exp 2026-09-04"
+        assert row["ticker"] == "MSTR"
+        assert row["phase"] == "PUT_SOLD"
+        assert row["contracts"] == 3
+
+    def test_no_executor_yields_no_rows(self, trader):
+        assert trader._position_rows() == []
+
+    def test_execution_pass_writes_state(self, trader, tmp_path, monkeypatch):
+        """Positions change between scans — the execution pass must persist them,
+        not just the daily scan."""
+        monkeypatch.setattr("wheel_main.LOG_DIR", tmp_path)
+        trader._executor = MagicMock()
+        trader._executor.open_tickers.return_value = ["MSTR"]
+        trader._executor.open_positions.return_value = [self._record()]
+
+        trader._run_wheel_execution()
+
+        data = json.loads((tmp_path / "wheel_state.json").read_text())
+        assert data["open_positions"][0]["contract"] == "MSTR $85 Put exp 2026-09-04"
+
+    def test_state_written_even_when_execution_raises(self, trader, tmp_path, monkeypatch):
+        monkeypatch.setattr("wheel_main.LOG_DIR", tmp_path)
+        trader._executor = MagicMock()
+        trader._executor.open_tickers.return_value = ["MSTR"]
+        trader._executor.open_positions.return_value = [self._record()]
+        trader._executor.run_once.side_effect = RuntimeError("boom")
+
+        trader._run_wheel_execution()  # must not raise
+
+        assert (tmp_path / "wheel_state.json").exists()
 
 
 class TestNoTradingPaths:

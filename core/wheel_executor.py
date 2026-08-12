@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from broker.alpaca_client import _parse_occ_symbol
+from broker.alpaca_client import _parse_occ_symbol, format_occ_symbol
 from config import settings
 from core import alerts
 from core.wheel_position_store import WheelPositionStore, WheelRecord
@@ -85,6 +85,10 @@ class WheelExecutor:
         """Tickers with a non-CASH wheel leg — always managed, even if the
         scanner drops them from tonight's candidates."""
         return [t for t, r in self._store.all().items() if r.phase != WheelState.CASH]
+
+    def open_positions(self) -> list[WheelRecord]:
+        """Live (non-CASH) wheel records, for state/dashboard reporting."""
+        return [r for r in self._store.all().values() if r.phase != WheelState.CASH]
 
     def run_once(self, candidates: list[str], regime: int, is_uncertain: bool) -> None:
         market_open = self._client.is_market_open()
@@ -195,7 +199,7 @@ class WheelExecutor:
         committed = collateral_each * contracts
         log.info("Wheel [%s]: SELL_PUT %d× %s @ $%.2f (collateral $%.0f, %s)",
                  ticker, contracts, contract.symbol, limit, committed, action.reason)
-        self._alert(ticker, f"SELL_PUT {contracts}× {contract.symbol} @ ${limit:.2f} "
+        self._alert(ticker, f"SELL_PUT {contracts}× {format_occ_symbol(contract.symbol)} @ ${limit:.2f} "
                             f"(delta {contract.delta}, collateral ${committed:,.0f})")
         return committed
 
@@ -212,7 +216,7 @@ class WheelExecutor:
             # the regime-based close is still assessed below (it needs no mark).
             log.warning("Wheel [%s]: no quote for open leg %s — P&L stops suspended this pass",
                         ticker, rec.active_contract)
-            self._alert(ticker, f"cannot price open leg {rec.active_contract} — "
+            self._alert(ticker, f"cannot price open leg {format_occ_symbol(rec.active_contract)} — "
                                 f"P&L stops suspended until quote returns", severity="warning")
 
         pnl_pct = 0.0
@@ -244,7 +248,7 @@ class WheelExecutor:
             return
         log.info("Wheel [%s]: CLOSE %d× %s @ $%.2f (pnl %.0f%%, %s)",
                  ticker, rec.contracts, rec.active_contract, close_limit, pnl_pct * 100, action.reason)
-        self._alert(ticker, f"CLOSE {rec.contracts}× {rec.active_contract} @ ${close_limit:.2f} "
+        self._alert(ticker, f"CLOSE {rec.contracts}× {format_occ_symbol(rec.active_contract)} @ ${close_limit:.2f} "
                             f"(pnl {pnl_pct * 100:.0f}%, {action.reason})")
 
     # -- helpers --------------------------------------------------------
@@ -258,7 +262,7 @@ class WheelExecutor:
             log.exception("Wheel [%s]: order submit failed", ticker)
             self._alert(
                 ticker,
-                f"ORDER FAILED: {kwargs.get('side')} {kwargs.get('symbol')} "
+                f"ORDER FAILED: {kwargs.get('side')} {format_occ_symbol(kwargs.get('symbol', ''))} "
                 f"— {type(exc).__name__}: {exc}",
                 severity="warning",
             )

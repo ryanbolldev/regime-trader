@@ -93,8 +93,13 @@ def tmp_lockfile(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def patch_modules(monkeypatch, mock_hmm) -> dict:
+def patch_modules(monkeypatch, mock_hmm, tmp_path) -> dict:
     """Replace every stub module with a MagicMock for the duration of each test."""
+    # _run_bar() ends in _write_dashboard_state(); without this every test that
+    # runs a bar overwrites the REAL logs/dashboard_state.json with serialized
+    # MagicMock reprs, which then crashes the live dashboard.
+    monkeypatch.setattr("main.LOG_DIR", tmp_path)
+
     ohlcv  = _synthetic_ohlcv()
     series = MagicMock(spec=pd.Series)
 
@@ -655,6 +660,32 @@ class TestBtcExitCircuitBreaker:
         state_file = tmp_path / "dashboard_state.json"
         state = json.loads(state_file.read_text())
         assert state["btc_exit_failure_count"] == 2
+
+    def test_bar_never_writes_to_the_real_logs_dir(self, trader):
+        """A bar must not touch the repo's logs/dashboard_state.json — tests write
+        serialized MagicMocks, which crash the live dashboard's formatters."""
+        import main
+        real_state = Path(main.__file__).parent / "logs" / "dashboard_state.json"
+        before = real_state.read_bytes() if real_state.exists() else None
+
+        trader._run_bar()
+
+        after = real_state.read_bytes() if real_state.exists() else None
+        assert after == before, "test run overwrote the real dashboard_state.json"
+
+    def test_dashboard_numbers_are_json_numbers(self, trader, tmp_path):
+        """Drawdowns must serialize as numbers; default=str would silently turn a
+        mock (or any odd type) into a string the dashboard can't format."""
+        import json
+        trader._risk.get_drawdown_state.return_value = {
+            "peak_drawdown": -0.02, "daily_drawdown": -0.01, "weekly_drawdown": -0.03,
+        }
+        with patch("main.LOG_DIR", tmp_path):
+            trader._write_dashboard_state()
+
+        state = json.loads((tmp_path / "dashboard_state.json").read_text())
+        for key in ("drawdown_pct", "daily_drawdown", "weekly_drawdown", "nav"):
+            assert isinstance(state[key], (int, float)), f"{key} is {type(state[key])}"
 
 
 # ---------------------------------------------------------------------------

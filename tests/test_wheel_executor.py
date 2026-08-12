@@ -228,3 +228,30 @@ class TestMarketHours:
         assert any("ASSIGNED" in a[1] for a in sent)
         # … but no orders were placed
         client.submit_order.assert_not_called()
+
+
+class TestOpenPositions:
+    """Reporting accessor used by wheel_main to publish dashboard state."""
+
+    def test_empty_when_flat(self, env):
+        client, store, strat = env
+        assert WheelExecutor(client, store, strat).open_positions() == []
+
+    def test_returns_live_leg(self, env):
+        client, store, strat = env
+        client.get_positions.return_value = [_pos(PUT, -3, avg=2.5)]
+        ex = WheelExecutor(client, store, strat)
+        ex.run_once(["MSTR"], 3, False)
+
+        open_recs = ex.open_positions()
+        assert [r.symbol for r in open_recs] == ["MSTR"]
+        assert open_recs[0].active_contract == PUT
+        assert open_recs[0].contracts == 3
+
+    def test_excludes_cash_tickers(self, env):
+        client, store, strat = env
+        strat.get_next_action.return_value = WheelAction(
+            WheelActionType.WAIT, None, "no entry", 0)
+        ex = WheelExecutor(client, store, strat)
+        ex.run_once(["MSTR"], 3, False)   # reconciles MSTR as CASH
+        assert ex.open_positions() == []

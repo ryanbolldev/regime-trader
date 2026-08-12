@@ -37,11 +37,11 @@ import os
 import signal as signal_module
 import sys
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from broker.alpaca_client import AlpacaClient
+from broker.alpaca_client import AlpacaClient, _parse_occ_symbol, format_occ_symbol
 from config import settings
 from config.credentials import ConfigurationError, enable_os_trust_store
 from core import alerts, feature_engineering, market_data
@@ -230,6 +230,11 @@ class WheelTrader:
         except Exception:
             log.exception("Wheel execution pass failed")
 
+        # Positions change at execution cadence, not scan cadence — without this
+        # the dashboard would only refresh legs once per daily scan and miss any
+        # position opened and closed between scans.
+        self._write_wheel_state()
+
     def _train_and_predict_regime(self) -> int:
         """Train the HMM on a fresh 2 years of the market-proxy ticker and return
         the current confirmed regime. Retraining each cycle keeps the model
@@ -310,6 +315,31 @@ class WheelTrader:
     # Dashboard state
     # ------------------------------------------------------------------
 
+    def _position_rows(self) -> list[dict]:
+        """Live wheel legs, formatted for the dashboard."""
+        if self._executor is None:
+            return []
+
+        today = datetime.now(tz=timezone.utc).date()
+        rows: list[dict] = []
+        for rec in self._executor.open_positions():
+            dte = None
+            if rec.active_contract:
+                parsed = _parse_occ_symbol(rec.active_contract)
+                if parsed is not None:
+                    dte = (date.fromisoformat(parsed[1]) - today).days
+            rows.append({
+                "ticker":       rec.symbol,
+                "phase":        rec.phase.value,
+                "contract":     format_occ_symbol(rec.active_contract) if rec.active_contract else "—",
+                "contracts":    rec.contracts,
+                "dte":          dte,
+                "shares_owned": rec.shares_owned,
+                "cost_basis":   rec.cost_basis,
+                "premium_collected_total": rec.premium_collected_total,
+            })
+        return rows
+
     def _write_wheel_state(self) -> None:
         try:
             nav = float(self._client.get_account().portfolio_value)
@@ -337,6 +367,7 @@ class WheelTrader:
             "last_scan_at":    self._last_scan_at.isoformat() if self._last_scan_at else None,
             "candidate_count": len(self._last_candidates),
             "candidates":      candidates,
+            "open_positions":  self._position_rows(),
             "updated_at":      datetime.now(tz=timezone.utc).isoformat(),
         }
 
