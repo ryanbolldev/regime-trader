@@ -230,6 +230,46 @@ class TestMarketHours:
         client.submit_order.assert_not_called()
 
 
+class TestOpenTickers:
+    """The managed set comes from the broker, not the store — a lost or stale
+    state file must never orphan a live leg or hide it from the position cap."""
+
+    def test_finds_leg_the_store_never_knew_about(self, env):
+        client, store, strat = env
+        client.get_positions.return_value = [_pos(PUT, -3, avg=2.5)]
+        # store is empty — as it would be after the state file was lost
+        assert WheelExecutor(client, store, strat).open_tickers() == ["MSTR"]
+
+    def test_assigned_shares_count_as_open(self, env):
+        client, store, strat = env
+        client.get_positions.return_value = [_pos("MSTR", 100, avg=100.0, mv=9500.0)]
+        assert WheelExecutor(client, store, strat).open_tickers() == ["MSTR"]
+
+    def test_ignores_stale_store_record_when_broker_is_flat(self, env):
+        client, store, strat = env
+        store.reconcile("MSTR", [_pos(PUT, -3, avg=2.5)], current_regime=3)
+        client.get_positions.return_value = []
+        assert WheelExecutor(client, store, strat).open_tickers() == []
+
+    def test_sub_100_share_lot_is_not_open(self, env):
+        client, store, strat = env
+        client.get_positions.return_value = [_pos("MSTR", 40, avg=100.0, mv=4000.0)]
+        assert WheelExecutor(client, store, strat).open_tickers() == []
+
+    def test_position_cap_counts_broker_legs_against_empty_store(self, env, monkeypatch):
+        client, store, strat = env
+        # two cheap short puts ($1k collateral each) so the deployed-capital cap
+        # stays slack and the position cap is the only thing that can block entry
+        client.get_positions.return_value = [
+            _pos("AAPL250620P00010000", -1, avg=0.5),
+            _pos("NVDA250620P00010000", -1, avg=0.5),
+        ]
+        monkeypatch.setattr(settings, "MAX_WHEEL_POSITIONS", 2)
+        strat.get_next_action.return_value = _sell_put(_contract())
+        WheelExecutor(client, store, strat).run_once(["MSTR"], 3, False)
+        client.submit_order.assert_not_called()
+
+
 class TestOpenPositions:
     """Reporting accessor used by wheel_main to publish dashboard state."""
 

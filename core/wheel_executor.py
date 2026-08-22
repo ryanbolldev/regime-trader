@@ -24,7 +24,7 @@ from typing import Optional
 from broker.alpaca_client import _parse_occ_symbol, format_occ_symbol
 from config import settings
 from core import alerts
-from core.wheel_position_store import WheelPositionStore, WheelRecord
+from core.wheel_position_store import WheelPositionStore, WheelRecord, _broker_state
 from core.wheel_strategy import WheelActionType, WheelState, WheelStrategy
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,22 @@ def _spread_ok(contract, max_pct: float) -> bool:
         return False
     mid = (contract.bid + contract.ask) / 2.0
     return mid > 0 and (contract.ask - contract.bid) / mid <= max_pct
+
+
+def _open_wheel_tickers(positions: list) -> set[str]:
+    """Underlyings the broker says hold a live wheel leg (short option, or a
+    100+ share lot).
+
+    Derived from broker positions rather than the store so a lost or emptied
+    state file can never orphan an open position: the store only knows what it
+    was told last run, and an unmanaged short put has no close path. Phase logic
+    is _broker_state's, so this cannot drift from what reconcile() decides.
+    """
+    underlyings: set[str] = set()
+    for p in positions:
+        parsed = _parse_occ_symbol(p.symbol)
+        underlyings.add((parsed[0] if parsed else p.symbol).upper())
+    return {t for t in underlyings if _broker_state(t, positions)[0] != WheelState.CASH}
 
 
 def _wheel_collateral(positions: list) -> float:
@@ -82,12 +98,16 @@ class WheelExecutor:
     # ------------------------------------------------------------------
 
     def open_tickers(self) -> list[str]:
-        """Tickers with a non-CASH wheel leg — always managed, even if the
-        scanner drops them from tonight's candidates."""
-        return [t for t, r in self._store.all().items() if r.phase != WheelState.CASH]
+        """Tickers the broker holds a wheel leg in — always managed, even if the
+        scanner drops them from tonight's candidates and even if the state file
+        was lost."""
+        return sorted(_open_wheel_tickers(self._client.get_positions()))
 
     def open_positions(self) -> list[WheelRecord]:
-        """Live (non-CASH) wheel records, for state/dashboard reporting."""
+        """Live (non-CASH) wheel records, for state/dashboard reporting. Store-
+        backed because the persisted economics (lifetime premium, entry regime)
+        are what reporting wants; phases are fresh because open_tickers() forces
+        every broker-held leg through reconcile() on the pass just before."""
         return [r for r in self._store.all().values() if r.phase != WheelState.CASH]
 
     def run_once(self, candidates: list[str], regime: int, is_uncertain: bool) -> None:
@@ -101,8 +121,11 @@ class WheelExecutor:
         nav         = float(acct.portfolio_value)
         bp          = float(acct.options_buying_power)
 
-        deployed   = _wheel_collateral(positions)
-        open_count = sum(1 for r in self._store.all().values() if r.phase != WheelState.CASH)
+        deployed = _wheel_collateral(positions)
+        # Broker-derived like the collateral above: counting the store here would
+        # read 0 against a lost state file and let MAX_WHEEL_POSITIONS be breached
+        # by exactly the legs it had forgotten.
+        open_count = len(_open_wheel_tickers(positions))
 
         for ticker in candidates:
             try:
